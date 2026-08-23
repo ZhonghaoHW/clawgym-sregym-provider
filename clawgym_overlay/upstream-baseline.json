@@ -1,0 +1,44 @@
+{
+  "schema_id": "clawgym.sregym_upstream_baseline.v1",
+  "upstream": {
+    "repository": "https://github.com/SREGym/SREGym.git",
+    "revision": "ba07faf1a322f9b6d4a279643bb796aa2f36f64b",
+    "tree": "adfa966e9b4178bc1c5e961287388f563fdd7b44"
+  },
+  "license": {
+    "path": "LICENSE.txt",
+    "spdx_id": "MIT",
+    "sha256": "c71e7a54574335adc1d33786d46f69350561ad2645444c4a99faea0fde56cfb2"
+  },
+  "submodules": [
+    {
+      "path": "SREGym-applications",
+      "repository": "https://github.com/SREGym/SREGym-applications.git",
+      "revision": "2b2f9c6c2e97c44abbfcc44af1cf2f994bbb04f8"
+    },
+    {
+      "path": "SREGym-applications/FleetCast",
+      "repository": "https://github.com/lilygn/FleetCast",
+      "revision": "a2b9c5e5a14cc7892c347e0dd944a4e2ab09a8fb"
+    },
+    {
+      "path": "SREGym-applications/astronomy-shop",
+      "repository": "https://github.com/xlab-uiuc/opentelemetry-helm-charts",
+      "revision": "7d7b074714345a0c282b0be75af7a2c504b44c95"
+    },
+    {
+      "path": "SREGym-applications/flight-ticket",
+      "repository": "https://github.com/xlab-uiuc/flight-ticket",
+      "revision": "77fe227f7df911ccdbe2f2b514e5090b51a8a169"
+    },
+    {
+      "path": "SREGym-applications/train-ticket",
+      "repository": "https://github.com/xlab-uiuc/train-ticket",
+      "revision": "c9537c1533514bb6ba9bd664b9312c2b9cee413c"
+    }
+  ],
+  "namespaces": {
+    "overlay": "clawgym_overlay",
+    "tests": "tests/clawgym_overlay"
+  }
+}
