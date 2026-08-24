@@ -1,0 +1,7 @@
+{
+  "schema_id": "clawgym.sregym_partition_manifest.v1",
+  "partition_id": "sregym-lite.train.integration.v1",
+  "partition": "train",
+  "purpose": "provider-contract-integration",
+  "problems": ["network_policy_block"]
+}

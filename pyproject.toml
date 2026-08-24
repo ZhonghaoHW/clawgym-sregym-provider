@@ -4,6 +4,7 @@ requires-python = ">= 3.12"
 version = "0.0.1"
 
 dependencies = [
+    "clawgym @ git+https://github.com/ZhonghaoHW/clawgym.git@3cff5e74a1634d12c097394b57efeefa8f189ac4",
     "ansible>=11.8.0",
     "anthropic>=0.52.0",
     "anyio==4.9.0",
@@ -233,11 +234,14 @@ packages = [
     "scripts",
     "llm_backend",
     "logger",
+    "clawgym_overlay",
+    "clawgym_overlay.providers",
 ]
 
 [tool.setuptools.package-data]
 atif_converter = ["README.md"]
 "atif_converter.atif" = ["UPSTREAM.md"]
+clawgym_overlay = ["manifests/*.json"]
 
 [tool.uv.sources]
 geni-lib-xlab = { path = "scripts/geni_lib/mod/geni_lib_xlab-1.0.0.tar.gz" }

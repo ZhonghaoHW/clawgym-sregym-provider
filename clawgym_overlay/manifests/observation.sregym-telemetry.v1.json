@@ -1,0 +1,6 @@
+{
+  "schema_id": "clawgym.sregym_observation_profile.v1",
+  "observation_profile_id": "sregym-telemetry.v1",
+  "sources": ["prometheus", "loki", "jaeger"],
+  "capture_window": "episode"
+}

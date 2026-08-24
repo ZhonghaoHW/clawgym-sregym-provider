@@ -1,0 +1,7 @@
+{
+  "schema_id": "clawgym.sregym_execution_profile.v1",
+  "execution_profile_id": "sregym-container.v1",
+  "backend": "sregym-container-runner",
+  "isolation": "container",
+  "timeout_seconds": 1800
+}

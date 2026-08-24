@@ -1,0 +1,8 @@
+{
+  "schema_id": "clawgym.sregym_tool_profile.v1",
+  "tool_profile_id": "filtered-kubernetes-mcp.v1",
+  "interfaces": ["kubernetes-api", "sregym-mcp"],
+  "capabilities": ["observe-kubernetes-resources", "mutate-kubernetes-resources"],
+  "denied_namespaces": ["chaos-mesh", "khaos"],
+  "trajectory_durability": "host-retained-json"
+}

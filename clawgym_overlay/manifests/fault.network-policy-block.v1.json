@@ -1,0 +1,8 @@
+{
+  "schema_id": "clawgym.sregym_fault_profile.v1",
+  "fault_id": "network-policy-deny-all-recommendation",
+  "problem_id": "network_policy_block",
+  "mechanism": "kubernetes-network-policy-deny-all",
+  "target_component": "recommendation",
+  "seed_behavior": "deterministic-no-random-input"
+}

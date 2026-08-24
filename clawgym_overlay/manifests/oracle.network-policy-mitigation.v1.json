@@ -1,0 +1,7 @@
+{
+  "schema_id": "clawgym.sregym_oracle_profile.v1",
+  "oracle_id": "network-policy-mitigation",
+  "problem_id": "network_policy_block",
+  "required_stages": ["mitigation"],
+  "verdict_policy": "all-required-stages-success"
+}

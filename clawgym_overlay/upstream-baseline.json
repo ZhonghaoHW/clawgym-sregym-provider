@@ -40,5 +40,10 @@
   "namespaces": {
     "overlay": "clawgym_overlay",
     "tests": "tests/clawgym_overlay"
-  }
+  },
+  "controlled_root_changes": [
+    "pyproject.toml",
+    "uv.lock"
+  ],
+  "core_patches": []
 }

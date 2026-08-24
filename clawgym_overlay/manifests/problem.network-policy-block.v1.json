@@ -1,0 +1,7 @@
+{
+  "schema_id": "clawgym.sregym_problem_manifest.v1",
+  "suite_id": "sregym-lite",
+  "problem_id": "network_policy_block",
+  "application_id": "hotel_reservation",
+  "task_stages": ["mitigation"]
+}

@@ -86,11 +86,28 @@ class UpstreamBaselineTest(unittest.TestCase):
 
     def test_changes_from_pin_stay_in_overlay_namespaces(self) -> None:
         changed = git("diff", "--name-only", f"{self.upstream_revision}..HEAD").splitlines()
+        explicitly_controlled = set(self.manifest["controlled_root_changes"])
+        core_patches = {record["path"] for record in self.manifest["core_patches"]}
         for path in changed:
             self.assertTrue(
-                any(path == prefix or path.startswith(prefix) for prefix in ALLOWED_OVERLAY_PATHS),
+                path in explicitly_controlled
+                or path in core_patches
+                or any(path == prefix or path.startswith(prefix) for prefix in ALLOWED_OVERLAY_PATHS),
                 path,
             )
+
+    def test_core_patches_are_auditable(self) -> None:
+        for record in self.manifest["core_patches"]:
+            self.assertEqual(
+                set(record),
+                {"path", "rationale", "tests", "sha256"},
+            )
+            self.assertTrue(record["rationale"].strip())
+            self.assertTrue(record["tests"])
+            content = (ROOT / record["path"]).read_bytes()
+            self.assertEqual(hashlib.sha256(content).hexdigest(), record["sha256"])
+            for test_path in record["tests"]:
+                self.assertTrue((ROOT / test_path).is_file(), test_path)
 
 
 if __name__ == "__main__":

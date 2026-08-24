@@ -744,6 +744,14 @@ wheels = [
 ]
 
 [[package]]
+name = "clawgym"
+version = "0.1.0"
+source = { git = "https://github.com/ZhonghaoHW/clawgym.git?rev=3cff5e74a1634d12c097394b57efeefa8f189ac4#3cff5e74a1634d12c097394b57efeefa8f189ac4" }
+dependencies = [
+    { name = "jsonschema" },
+]
+
+[[package]]
 name = "click"
 version = "8.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3977,6 +3985,7 @@ dependencies = [
     { name = "certifi" },
     { name = "cffi" },
     { name = "charset-normalizer" },
+    { name = "clawgym" },
     { name = "click" },
     { name = "cloudpickle" },
     { name = "colorama" },
@@ -4139,6 +4148,7 @@ requires-dist = [
     { name = "certifi", specifier = "==2025.4.26" },
     { name = "cffi", specifier = "==1.17.1" },
     { name = "charset-normalizer", specifier = "==3.4.2" },
+    { name = "clawgym", git = "https://github.com/ZhonghaoHW/clawgym.git?rev=3cff5e74a1634d12c097394b57efeefa8f189ac4" },
     { name = "click", specifier = "==8.2.1" },
     { name = "cloudpickle", specifier = "==3.1.1" },
     { name = "colorama", specifier = "==0.4.6" },
