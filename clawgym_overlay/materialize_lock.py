@@ -84,10 +84,10 @@ def preload_runtime_images(
         archive = Path(archive_name)
         archive.unlink()
         try:
-            for command in (
-                ("docker", "pull", "--platform", platform, source),
-                ("docker", "tag", source, target),
-                (
+            commands = (
+                ("pull", ("docker", "pull", "--platform", platform, source)),
+                ("tag", ("docker", "tag", source, target)),
+                ("export", (
                     "docker",
                     "image",
                     "save",
@@ -96,22 +96,28 @@ def preload_runtime_images(
                     "--output",
                     str(archive),
                     target,
-                ),
-                (
+                )),
+                ("load", (
                     "kind",
                     "load",
                     "image-archive",
                     "--name",
                     cluster_name,
                     str(archive),
-                ),
-            ):
-                runner(
-                    command,
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                )),
+            )
+            for stage, command in commands:
+                try:
+                    runner(
+                        command,
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                except subprocess.CalledProcessError as exc:
+                    raise LockedRuntimeError(
+                        f"failed to {stage} locked runtime image: {artifact['name']}"
+                    ) from exc
         finally:
             archive.unlink(missing_ok=True)
         identities.append(f"{target}:{artifact['integrity']}")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import subprocess
 
 import pytest
 
@@ -67,3 +68,17 @@ def test_preload_images_uses_only_locked_sources_and_declared_targets() -> None:
     assert all(call[0][0:5] == ("docker", "image", "save", "--platform", "linux/amd64") for call in saves)
     loads = calls[3::4]
     assert all(call[0][0:3] == ("kind", "load", "image-archive") for call in loads)
+
+
+def test_preload_failure_identifies_only_locked_artifact_and_stage() -> None:
+    document = lock_fixture()
+
+    def fail_load(command, **kwargs):
+        if command[0:3] == ("kind", "load", "image-archive"):
+            raise subprocess.CalledProcessError(1, command)
+
+    with pytest.raises(
+        LockedRuntimeError,
+        match=r"failed to load locked runtime image: runtime-image\.",
+    ):
+        preload_runtime_images(document, "clawgym-formal", runner=fail_load)
