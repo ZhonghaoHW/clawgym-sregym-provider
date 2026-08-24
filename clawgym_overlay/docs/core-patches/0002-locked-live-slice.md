@@ -21,6 +21,13 @@ the reset postcondition; Kind-bundled control-plane images are covered by the
 pinned Kind node image rather than represented as independently pullable
 artifacts.
 
+The public fault seam also activates the first configured evaluation stage
+after injection. This is required by split host orchestration: `prepare` no
+longer calls the combined upstream `start_problem()`, so the later Oracle must
+still see `waiting_for_agent=True` and accept the deterministic validation
+submission. The legacy `start_problem()` path continues to use the same
+private injection primitive and retains its behavior.
+
 For `network_policy_block`, an absent NetworkPolicy is successful idempotent
 recovery, while non-404 Kubernetes errors propagate to the host instead of
 being hidden by the generic recovery decorator. Focused tests execute the

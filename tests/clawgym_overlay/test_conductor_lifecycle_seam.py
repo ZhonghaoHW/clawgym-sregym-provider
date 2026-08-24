@@ -78,6 +78,8 @@ def test_config_defaults_preserve_upstream_cleanup_and_allow_static_stages() -> 
     assert default.metrics_server_manifest is None
     assert default.openebs_manifest is None
     assert default.application_image_overrides is None
+    assert default.mcp_image is None
+    assert default.workload_image is None
     configured = bare_conductor()
     configured.config.task_stages = ("mitigation",)
     configured.get_problem_stages()
@@ -87,6 +89,7 @@ def test_config_defaults_preserve_upstream_cleanup_and_allow_static_stages() -> 
 def test_fault_injection_seam_is_idempotent() -> None:
     conductor = bare_conductor()
     conductor.problem = object()
+    conductor.stage_sequence = [{"name": "mitigation", "evaluation": lambda value: value}]
     calls = []
 
     def inject(self):
@@ -97,6 +100,8 @@ def test_fault_injection_seam_is_idempotent() -> None:
     assert conductor.inject_problem_fault()["status"] == "injected"
     assert conductor.inject_problem_fault()["status"] == "already_injected"
     assert calls == ["fault"]
+    assert conductor.waiting_for_agent is True
+    assert conductor.submission_stage == "mitigation"
 
 
 def test_recovery_and_cleanup_are_separate_and_idempotent() -> None:

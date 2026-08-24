@@ -272,6 +272,7 @@ class Conductor:
         if self.fault_injected:
             return {"status": "already_injected", "problem_id": self.problem_id}
         self._inject_fault()
+        self._advance_to_next_stage(start_index=0)
         return {"status": "injected", "problem_id": self.problem_id}
 
     def _evaluate_diagnosis(self, solution):
@@ -329,7 +330,7 @@ class Conductor:
 
         # Inject fault before the first stage if not already done
         if start_index == 0 and not self.fault_injected:
-            self.inject_problem_fault()
+            self._inject_fault()
 
         if start_index < len(self.stage_sequence):
             stage = self.stage_sequence[start_index]

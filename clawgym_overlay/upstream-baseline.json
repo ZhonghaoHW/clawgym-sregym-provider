@@ -53,7 +53,7 @@
         "tests/clawgym_overlay/test_conductor_lifecycle_seam.py",
         "tests/clawgym_overlay/test_wp4_core_patches.py"
       ],
-      "sha256": "2cf9d12c27af8497493a267a9163a1c790edfc6d0ecc13bc0c3621e0edab8baf"
+      "sha256": "c4484576388594df06c20bd20209b54c7769a6951bd83ca8c5d9f8f6f3c37117"
     },
     {
       "path": "sregym/service/apps/hotel_reservation.py",
