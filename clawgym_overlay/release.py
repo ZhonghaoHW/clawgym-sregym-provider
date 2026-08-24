@@ -270,7 +270,7 @@ class SREGymReleaseBuilder:
             capture_output=True,
             text=True,
         )
-        return completed.stdout.strip()
+        return completed.stdout.rstrip("\n")
 
     def verify_repository(self) -> str:
         if self._git("status", "--porcelain"):

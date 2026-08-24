@@ -90,3 +90,13 @@ def test_repository_builder_rejects_dirty_checkout(monkeypatch) -> None:
     monkeypatch.setattr(builder, "_git", lambda *arguments: " M tracked.py")
     with pytest.raises(ContractValidationError, match="clean provider checkout"):
         builder.verify_repository()
+
+
+def test_git_output_preserves_submodule_status_prefix(monkeypatch) -> None:
+    builder = SREGymReleaseBuilder(ROOT)
+
+    class Completed:
+        stdout = " abc123 submodule\n"
+
+    monkeypatch.setattr("clawgym_overlay.release.subprocess.run", lambda *args, **kwargs: Completed())
+    assert builder._git("submodule", "status") == " abc123 submodule"
