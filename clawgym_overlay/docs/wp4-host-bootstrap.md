@@ -59,10 +59,11 @@ deployment lock, so either topology or dependency changes create a new
 
 Docker 29's containerd image store exports multi-platform indexes even when
 only the worker's platform content is present, which is incompatible with
-Kind's all-platform archive import. The formal preloader therefore asks each
-Kind node's containerd to pull the exact locked digest for `linux/amd64`, then
-adds only the manifest's declared runtime tag inside that node. Mutable image
-resolution remains forbidden.
+Kind's all-platform archive import. The formal preloader therefore asks the
+control-plane containerd to pull the exact locked digest for `linux/amd64`
+once, exports that single-platform content, and streams it into the worker
+nodes before adding the manifest's declared runtime tag. This also avoids
+fourfold registry requests. Mutable image resolution remains forbidden.
 
 ## GitHub App source access
 

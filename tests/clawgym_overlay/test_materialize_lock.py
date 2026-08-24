@@ -60,13 +60,17 @@ def test_preload_images_uses_only_locked_sources_and_declared_targets() -> None:
 
     images = [item for item in document["artifacts"] if item["name"].startswith("runtime-image.")]
     assert result["image_count"] == len(images)
-    assert len(calls) == 4 * len(images)
+    assert len(calls) == 5 * len(images)
     assert all(call[1]["check"] is True for call in calls)
-    pulls = calls[::2]
+    pulls = calls[::5]
     assert all(call[0][0:3] == ("docker", "exec", "--privileged") for call in pulls)
     assert all(call[0][8:10] == ("--platform", "linux/amd64") for call in pulls)
     assert all("latest" not in call[0][10] for call in pulls)
-    tags = calls[1::2]
+    exports = calls[2::5]
+    assert all(call[0][7:10] == ("export", "--platform", "linux/amd64") for call in exports)
+    imports = calls[3::5]
+    assert all(call[0][8:10] == ("import", "--platform") for call in imports)
+    tags = calls[1::5] + calls[4::5]
     assert all(call[0][7:9] == ("tag", "--force") for call in tags)
     assert any(call[0][-1] == "docker.io/library/runtime-image.probe:latest" for call in tags)
 

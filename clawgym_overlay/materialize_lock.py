@@ -8,6 +8,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import urllib.request
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -84,6 +85,11 @@ def preload_runtime_images(
         nodes = tuple(line for line in completed.stdout.splitlines() if line)
     if not nodes or len(nodes) != len(set(nodes)):
         raise LockedRuntimeError("Kind node inventory is empty or duplicated")
+    control_nodes = tuple(node for node in nodes if node.endswith("control-plane"))
+    if len(control_nodes) != 1:
+        raise LockedRuntimeError("Kind node inventory must contain one control plane")
+    control_node = control_nodes[0]
+    worker_nodes = tuple(node for node in nodes if node != control_node)
 
     def canonical_target(reference: str) -> str:
         head = reference.split("/", maxsplit=1)[0]
@@ -103,37 +109,76 @@ def preload_runtime_images(
             continue
         source = artifact["source"].removeprefix("oci://")
         target = canonical_target(artifact["target"])
-        for node in nodes:
-            commands = (
+        descriptor, archive_name = tempfile.mkstemp(prefix="clawgym-node-image-", suffix=".tar")
+        os.close(descriptor)
+        archive = Path(archive_name)
+
+        def execute(stage: str, command: tuple[str, ...], **kwargs: Any) -> None:
+            try:
+                runner(
+                    command,
+                    check=True,
+                    stderr=subprocess.DEVNULL,
+                    **kwargs,
+                )
+            except subprocess.CalledProcessError as exc:
+                raise LockedRuntimeError(
+                    f"failed to {stage} locked runtime image: {artifact['name']}"
+                ) from exc
+
+        try:
+            execute(
+                "pull",
                 (
-                    "pull",
-                    (
-                        "docker", "exec", "--privileged", node,
-                        "ctr", "--namespace=k8s.io", "images", "pull",
-                        "--platform", platform, source,
-                    ),
+                    "docker", "exec", "--privileged", control_node,
+                    "ctr", "--namespace=k8s.io", "images", "pull",
+                    "--platform", platform, source,
                 ),
+                stdout=subprocess.DEVNULL,
+            )
+            execute(
+                "tag",
                 (
+                    "docker", "exec", "--privileged", control_node,
+                    "ctr", "--namespace=k8s.io", "images", "tag",
+                    "--force", source, target,
+                ),
+                stdout=subprocess.DEVNULL,
+            )
+            with archive.open("wb") as output:
+                execute(
+                    "export",
+                    (
+                        "docker", "exec", "--privileged", control_node,
+                        "ctr", "--namespace=k8s.io", "images", "export",
+                        "--platform", platform, "-", source,
+                    ),
+                    stdout=output,
+                )
+            for node in worker_nodes:
+                with archive.open("rb") as source_archive:
+                    execute(
+                        "import",
+                        (
+                            "docker", "exec", "--privileged", "-i", node,
+                            "ctr", "--namespace=k8s.io", "images", "import",
+                            "--platform", platform, "--digests",
+                            "--snapshotter=overlayfs", "-",
+                        ),
+                        stdin=source_archive,
+                        stdout=subprocess.DEVNULL,
+                    )
+                execute(
                     "tag",
                     (
                         "docker", "exec", "--privileged", node,
                         "ctr", "--namespace=k8s.io", "images", "tag",
                         "--force", source, target,
                     ),
-                ),
-            )
-            for stage, command in commands:
-                try:
-                    runner(
-                        command,
-                        check=True,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                except subprocess.CalledProcessError as exc:
-                    raise LockedRuntimeError(
-                        f"failed to {stage} locked runtime image: {artifact['name']}"
-                    ) from exc
+                    stdout=subprocess.DEVNULL,
+                )
+        finally:
+            archive.unlink(missing_ok=True)
         identities.append(f"{artifact['target']}:{artifact['integrity']}")
     return {
         "schema_id": "clawgym.sregym_preloaded_images.v1",
