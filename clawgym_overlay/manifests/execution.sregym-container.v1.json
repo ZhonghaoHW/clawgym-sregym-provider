@@ -6,6 +6,6 @@
   "timeout_seconds": 1800,
   "deployment_cache_policy": "empty-per-formal-run",
   "runtime_image_policy": "declared-subset-only",
-  "deployment_lock_digest": "67727025fe3c99455d09f8ce8fde613b051ec8ccd11640909eaa206e49d83b2c",
+  "deployment_lock_digest": "606919c27ec55ceebe91f1154e2f3cb60570799ada74796e3be5ae7578f50cb1",
   "kind_topology_sha256": "73e40fcc52b144afe17f886cc38521bca42386a80927063a6ae2145b6be8cf63"
 }
