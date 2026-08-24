@@ -53,6 +53,16 @@ def verify_formal_kind_topology(provider_root: Path, execution_profile: dict) ->
     return topology
 
 
+def verify_release_revisions(
+    agent_document: dict, environment_document: dict, provider_revision: str
+) -> None:
+    if environment_document.get("overlay_revision") != provider_revision:
+        raise ValueError("EnvironmentRelease does not identify the provider checkout")
+    runtime = agent_document.get("runtime_reference", {})
+    if runtime != {"kind": "source_revision", "reference": provider_revision}:
+        raise ValueError("validation AgentRelease does not identify the provider checkout")
+
+
 def execute(args: argparse.Namespace) -> None:
     provider_root = Path(args.provider_checkout).resolve(strict=True)
     clawgym_root = Path(args.clawgym_checkout).resolve(strict=True)
@@ -62,11 +72,7 @@ def execute(args: argparse.Namespace) -> None:
     run_document = _read_json(args.run_manifest)
     agent_document = _read_json(args.agent_release)
     environment_document = _read_json(args.environment_release)
-    if environment_document.get("overlay_revision") != args.provider_revision:
-        raise ValueError("EnvironmentRelease does not identify the provider checkout")
-    runtime = agent_document.get("runtime_reference", {})
-    if runtime != {"kind": "source_revision", "value": args.provider_revision}:
-        raise ValueError("validation AgentRelease does not identify the provider checkout")
+    verify_release_revisions(agent_document, environment_document, args.provider_revision)
 
     from sregym.conductor.conductor import Conductor, ConductorConfig
 

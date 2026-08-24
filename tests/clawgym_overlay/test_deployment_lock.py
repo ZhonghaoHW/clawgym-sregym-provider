@@ -12,7 +12,7 @@ from clawgym_overlay.deployment_lock import (
     load_deployment_lock,
     validate_deployment_lock,
 )
-from clawgym_overlay.worker import verify_formal_kind_topology
+from clawgym_overlay.worker import verify_formal_kind_topology, verify_release_revisions
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -146,3 +146,23 @@ def test_formal_kind_topology_is_content_addressed_by_execution_profile() -> Non
     profile["kind_topology_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="topology"):
         verify_formal_kind_topology(ROOT, profile)
+
+
+def test_worker_accepts_wp1_runtime_reference_wire_field() -> None:
+    revision = "a" * 40
+    verify_release_revisions(
+        {"runtime_reference": {"kind": "source_revision", "reference": revision}},
+        {"overlay_revision": revision},
+        revision,
+    )
+
+
+@pytest.mark.parametrize("field", ["value", "revision", "path"])
+def test_worker_rejects_non_contract_runtime_reference_fields(field: str) -> None:
+    revision = "a" * 40
+    with pytest.raises(ValueError, match="AgentRelease"):
+        verify_release_revisions(
+            {"runtime_reference": {"kind": "source_revision", field: revision}},
+            {"overlay_revision": revision},
+            revision,
+        )
