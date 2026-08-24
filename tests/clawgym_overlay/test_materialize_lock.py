@@ -92,3 +92,27 @@ def test_preload_failure_identifies_only_locked_artifact_and_stage() -> None:
             runner=fail_load,
             nodes=("formal-control-plane",),
         )
+
+
+def test_preload_retries_transient_control_plane_pull() -> None:
+    document = lock_fixture()
+    attempts = 0
+    sleeps = []
+
+    def transient_pull(command, **kwargs):
+        nonlocal attempts
+        if command[7:10] == ("pull", "--platform", "linux/amd64"):
+            attempts += 1
+            if attempts < 3:
+                raise subprocess.CalledProcessError(1, command)
+
+    preload_runtime_images(
+        document,
+        "clawgym-formal",
+        runner=transient_pull,
+        nodes=("formal-control-plane",),
+        sleeper=sleeps.append,
+    )
+
+    assert attempts >= 3
+    assert sleeps[:2] == [30, 60]

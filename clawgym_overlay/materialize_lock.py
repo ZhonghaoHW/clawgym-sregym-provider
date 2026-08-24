@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 import urllib.request
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -67,6 +68,7 @@ def preload_runtime_images(
     *,
     runner: Callable[..., Any] = subprocess.run,
     nodes: tuple[str, ...] | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     """Pull each locked runtime digest directly into every Kind node."""
 
@@ -113,18 +115,28 @@ def preload_runtime_images(
         os.close(descriptor)
         archive = Path(archive_name)
 
-        def execute(stage: str, command: tuple[str, ...], **kwargs: Any) -> None:
-            try:
-                runner(
-                    command,
-                    check=True,
-                    stderr=subprocess.DEVNULL,
-                    **kwargs,
-                )
-            except subprocess.CalledProcessError as exc:
-                raise LockedRuntimeError(
-                    f"failed to {stage} locked runtime image: {artifact['name']}"
-                ) from exc
+        def execute(
+            stage: str,
+            command: tuple[str, ...],
+            *,
+            attempts: int = 1,
+            **kwargs: Any,
+        ) -> None:
+            for attempt in range(attempts):
+                try:
+                    runner(
+                        command,
+                        check=True,
+                        stderr=subprocess.DEVNULL,
+                        **kwargs,
+                    )
+                    return
+                except subprocess.CalledProcessError as exc:
+                    if attempt + 1 == attempts:
+                        raise LockedRuntimeError(
+                            f"failed to {stage} locked runtime image: {artifact['name']}"
+                        ) from exc
+                    sleeper(min(30 * (2**attempt), 240))
 
         try:
             execute(
@@ -134,6 +146,7 @@ def preload_runtime_images(
                     "ctr", "--namespace=k8s.io", "images", "pull",
                     "--platform", platform, source,
                 ),
+                attempts=5,
                 stdout=subprocess.DEVNULL,
             )
             execute(
