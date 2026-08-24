@@ -1,0 +1,3 @@
+# Install with visudo -cf, ownership root:root, and mode 0440.
+# The target must be a root-owned regular file outside every user-writable path.
+ecs-user ALL=(root) NOPASSWD: /usr/local/lib/clawgym/wp4-host-bootstrap.sh
