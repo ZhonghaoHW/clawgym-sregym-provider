@@ -50,3 +50,7 @@ evidence.
 The separate `bootstrap/stage-user-tools.sh` runs as `ecs-user` and verifies
 the fixed staging Kind, kubectl, Helm, and uv downloads before installing them
 under `/home/ecs-user/.local/bin`. It has no sudo authority.
+
+`bootstrap/staging-kind-config.yaml` is only the temporary four-node staging
+cluster topology. The formal cluster is created later from the published
+deployment lock, never from this staging file.
