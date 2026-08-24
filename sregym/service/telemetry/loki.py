@@ -18,6 +18,7 @@ class Loki:
         self.helm_configs = {}
         self.promtail_release_name = "promtail"
         self.promtail_values_file = str(BASE_DIR / "observer/loki/promtail-values.yaml")
+        self.promtail_chart_path = "grafana/promtail"
         self.pvc_config_file = None
 
         self.logger = logging.getLogger("all.infra.loki")
@@ -173,9 +174,9 @@ class Loki:
         self.logger.info("Deploying Promtail for Loki log collection...")
         Helm.install(
             release_name=self.promtail_release_name,
-            chart_path="grafana/promtail",
+            chart_path=self.promtail_chart_path,
             namespace=self.namespace,
-            remote_chart=True,
+            remote_chart=not os.path.isfile(self.promtail_chart_path),
             extra_args=["-f", self.promtail_values_file],
         )
         Helm.assert_if_deployed(self.namespace)

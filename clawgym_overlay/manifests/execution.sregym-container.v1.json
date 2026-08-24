@@ -3,5 +3,6 @@
   "execution_profile_id": "sregym-container.v1",
   "backend": "sregym-container-runner",
   "isolation": "container",
-  "timeout_seconds": 1800
+  "timeout_seconds": 1800,
+  "deployment_lock_digest": "0000000000000000000000000000000000000000000000000000000000000000"
 }

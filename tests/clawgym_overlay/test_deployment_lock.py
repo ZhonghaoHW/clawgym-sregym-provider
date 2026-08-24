@@ -20,6 +20,7 @@ def lock_fixture():
         "metrics-server-manifest": "manifest",
         "openebs-manifest": "manifest",
         "loki-chart": "chart",
+        "promtail-chart": "chart",
         "runtime-image.recommendation": "image",
     }
     artifacts = []
@@ -27,7 +28,7 @@ def lock_fixture():
         digest = f"sha256:{index + 1:064x}"
         source = f"https://artifacts.example.invalid/{name}/v1"
         if kind == "image":
-            source = f"https://registry.example.invalid/{name}@{digest}"
+            source = f"oci://registry.example.invalid/{name}@{digest}"
         artifacts.append(
             {
                 "name": name,
@@ -35,6 +36,7 @@ def lock_fixture():
                 "version": "v1.0.0",
                 "source": source,
                 "integrity": digest,
+                "target": name,
             }
         )
     return {
@@ -64,7 +66,7 @@ def test_complete_lock_has_stable_digest() -> None:
         ),
         (
             lambda document: document["artifacts"][5].update(source="https://image/v1"),
-            "image source",
+            "OCI identity",
         ),
         (
             lambda document: document["artifacts"][0].update(source="http://mutable.invalid"),

@@ -25,6 +25,7 @@ REQUIRED_ARTIFACTS: Final = frozenset(
         "metrics-server-manifest",
         "openebs-manifest",
         "loki-chart",
+        "promtail-chart",
     }
 )
 ARTIFACT_KINDS: Final = frozenset({"package", "binary", "manifest", "image", "chart"})
@@ -55,6 +56,7 @@ def validate_deployment_lock(document: Mapping[str, Any]) -> None:
             "version",
             "source",
             "integrity",
+            "target",
         }:
             raise ContractValidationError(f"{location} has invalid fields")
         name = artifact["name"]
@@ -62,6 +64,7 @@ def validate_deployment_lock(document: Mapping[str, Any]) -> None:
         version = artifact["version"]
         source = artifact["source"]
         integrity = artifact["integrity"]
+        target = artifact["target"]
         if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9._-]+", name):
             raise ContractValidationError(f"{location}.name is invalid")
         if name in names:
@@ -73,15 +76,19 @@ def validate_deployment_lock(document: Mapping[str, Any]) -> None:
             raise ContractValidationError(f"{location}.version is invalid")
         if version.lower() == "latest" or "latest" in version.lower().split("-"):
             raise ContractValidationError(f"{location}.version must be immutable")
-        if not isinstance(source, str) or not source.startswith("https://"):
-            raise ContractValidationError(f"{location}.source must be an HTTPS identity")
+        if not isinstance(target, str) or not target or target.startswith(("/", "~")):
+            raise ContractValidationError(f"{location}.target is invalid")
         if not _DIGEST.fullmatch(integrity if isinstance(integrity, str) else ""):
             raise ContractValidationError(f"{location}.integrity must be a SHA-256 digest")
         if kind == "image":
+            if not isinstance(source, str) or not source.startswith("oci://"):
+                raise ContractValidationError(f"{location} image source must be an OCI identity")
             if "@sha256:" not in source or not source.endswith(integrity):
                 raise ContractValidationError(f"{location} image source must use its digest")
             if name.startswith("runtime-image."):
                 runtime_images += 1
+        elif not isinstance(source, str) or not source.startswith("https://"):
+            raise ContractValidationError(f"{location}.source must be an HTTPS identity")
     missing = REQUIRED_ARTIFACTS - names
     if missing:
         raise ContractValidationError(f"deployment lock is missing artifacts: {sorted(missing)}")

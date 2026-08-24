@@ -17,3 +17,8 @@ This patch does not import ClawGym, add a problem, replace an oracle, or change
 the default runner sequence. The focused lifecycle seam test executes the
 actual patched class bodies in isolation from Kubernetes and other heavyweight
 services. A real cluster validation remains a WP4 gate.
+
+WP4 extends `ConductorConfig` with optional locked deployment inputs. They
+default to `None`, preserving the inherited mutable-source behavior for
+non-ClawGym callers; the live ClawGym composition requires verified local
+assets and digest-qualified application images.

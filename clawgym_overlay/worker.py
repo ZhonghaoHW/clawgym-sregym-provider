@@ -17,6 +17,8 @@ from clawgym_overlay.live_checks import (
     delete_validation_network_policy,
     verify_filtered_kubernetes_access,
 )
+from clawgym_overlay.deployment_lock import deployment_lock_digest, load_deployment_lock
+from clawgym_overlay.locked_runtime import LockedRuntime
 from clawgym_overlay.providers import SREGymEnvironmentValidationAdapter
 from clawgym_overlay.release import load_release_manifests
 from clawgym_overlay.validation_profiles import load_validation_profiles
@@ -58,14 +60,24 @@ def execute(args: argparse.Namespace) -> None:
 
     from sregym.conductor.conductor import Conductor, ConductorConfig
 
-    conductor = Conductor(
-        ConductorConfig(
+    deployment_lock = load_deployment_lock(
+        provider_root / "clawgym_overlay" / "deployment.wp4.lock.json"
+    )
+    execution_profile = load_release_manifests(
+        provider_root / "clawgym_overlay" / "manifests"
+    )["execution"]
+    if execution_profile["deployment_lock_digest"] != deployment_lock_digest(deployment_lock):
+        raise ValueError("execution profile does not identify the deployment lock")
+    locked_runtime = LockedRuntime(deployment_lock, args.deployment_cache)
+    conductor_config = ConductorConfig(
             deploy_loki=True,
             enable_noise=False,
             defer_cleanup=True,
             task_stages=("mitigation",),
-        )
     )
+    locked_runtime.configure_conductor(conductor_config)
+    conductor = Conductor(conductor_config)
+    locked_runtime.configure_services(conductor)
     manifest_root = provider_root / "clawgym_overlay" / "manifests"
     manifests = load_release_manifests(manifest_root)
     adapter_profile, sink_profile = load_validation_profiles(manifest_root)
@@ -130,6 +142,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--clawgym-revision", required=True)
     command.add_argument("--provider-checkout", required=True)
     command.add_argument("--provider-revision", required=True)
+    command.add_argument("--deployment-cache", required=True)
     command.set_defaults(handler=execute)
     return result
 

@@ -40,6 +40,9 @@ class ConductorConfig:
     enable_noise: bool = False
     defer_cleanup: bool = False
     task_stages: tuple[str, ...] | None = None
+    metrics_server_manifest: str | None = None
+    openebs_manifest: str | None = None
+    application_image_overrides: dict[str, str] | None = None
 
 
 class Conductor:
@@ -473,6 +476,10 @@ class Conductor:
         self.execution_start_time = time.time()
         self.problem = self.problems.get_problem_instance(self.problem_id)
         self.app = self.problem.app
+        if self.config.application_image_overrides is not None:
+            if not hasattr(self.app, "deployment_image_overrides"):
+                raise RuntimeError("selected application does not support immutable image overrides")
+            self.app.deployment_image_overrides = dict(self.config.application_image_overrides)
         self.detection_oracle = DetectionOracle(self.problem)
         self.results = {}
 
@@ -878,10 +885,11 @@ class Conductor:
             self._baseline_captured = True
 
         self.logger.info("[DEPLOY] Setting up metrics-server…")
-        self.kubectl.exec_command(
-            "kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/"
+        metrics_server_manifest = self.config.metrics_server_manifest or (
+            "https://github.com/kubernetes-sigs/metrics-server/"
             "releases/latest/download/components.yaml"
         )
+        self.kubectl.exec_command(f"kubectl apply -f {shlex.quote(metrics_server_manifest)}")
         self.kubectl.exec_command(
             "kubectl -n kube-system patch deployment metrics-server "
             "--type=json -p='["
@@ -898,7 +906,10 @@ class Conductor:
 
         self.logger.info("[DEPLOY] Setting up OpenEBS…")
         self._preflight_openebs_udev_mount()
-        self.kubectl.exec_command("kubectl apply -f https://openebs.github.io/charts/openebs-operator.yaml")
+        openebs_manifest = self.config.openebs_manifest or (
+            "https://openebs.github.io/charts/openebs-operator.yaml"
+        )
+        self.kubectl.exec_command(f"kubectl apply -f {shlex.quote(openebs_manifest)}")
         self.kubectl.exec_command(
             "kubectl patch storageclass openebs-hostpath "
             '-p \'{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}\''

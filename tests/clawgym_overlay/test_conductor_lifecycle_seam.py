@@ -75,6 +75,9 @@ def test_config_defaults_preserve_upstream_cleanup_and_allow_static_stages() -> 
     default = ConductorConfig()
     assert default.defer_cleanup is False
     assert default.task_stages is None
+    assert default.metrics_server_manifest is None
+    assert default.openebs_manifest is None
+    assert default.application_image_overrides is None
     configured = bare_conductor()
     configured.config.task_stages = ("mitigation",)
     configured.get_problem_stages()

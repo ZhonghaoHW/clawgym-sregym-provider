@@ -26,6 +26,7 @@ class HotelReservation(Application):
         self,
         mount_failure_scripts: bool = True,
         deployment_env_overrides: dict[str, dict[str, dict[str, str]]] | None = None,
+        deployment_image_overrides: dict[str, str] | None = None,
     ):
         super().__init__(HOTEL_RES_METADATA)
         self.kubectl = KubeCtl()
@@ -33,6 +34,7 @@ class HotelReservation(Application):
         self.helm_deploy = False
         self.mount_failure_scripts = mount_failure_scripts
         self.deployment_env_overrides = deployment_env_overrides or {}
+        self.deployment_image_overrides = deployment_image_overrides or {}
 
         self.load_app_json()
 
@@ -143,7 +145,7 @@ class HotelReservation(Application):
         Deployment/container overrides. Rendering a temporary manifest tree
         avoids a setup rollout and its misleading ReplicaSet history.
         """
-        if not self.deployment_env_overrides:
+        if not self.deployment_env_overrides and not self.deployment_image_overrides:
             yield Path(self.k8s_deploy_path)
             return
 
@@ -155,6 +157,14 @@ class HotelReservation(Application):
                 for deployment_name, containers in self.deployment_env_overrides.items()
                 for container_name in containers
             }
+            unmatched_images = set(self.deployment_image_overrides)
+
+            def image_repository(reference: str) -> str:
+                without_digest = reference.split("@", maxsplit=1)[0]
+                head, separator, tail = without_digest.rpartition("/")
+                if ":" in tail:
+                    tail = tail.split(":", maxsplit=1)[0]
+                return f"{head}{separator}{tail}"
 
             for config_path in [*rendered_path.rglob("*.yaml"), *rendered_path.rglob("*.yml")]:
                 with config_path.open() as config_file:
@@ -165,11 +175,18 @@ class HotelReservation(Application):
                     if not isinstance(document, dict) or document.get("kind") != "Deployment":
                         continue
                     deployment_name = document.get("metadata", {}).get("name")
+                    containers = document.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+                    for container in containers:
+                        current_image = container.get("image")
+                        image_key = image_repository(current_image) if current_image else ""
+                        if image_key in self.deployment_image_overrides:
+                            container["image"] = self.deployment_image_overrides[image_key]
+                            unmatched_images.discard(image_key)
+                            changed = True
                     container_overrides = self.deployment_env_overrides.get(deployment_name)
                     if not container_overrides:
                         continue
 
-                    containers = document.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
                     for container in containers:
                         container_name = container.get("name")
                         values = container_overrides.get(container_name)
@@ -192,6 +209,9 @@ class HotelReservation(Application):
                     f"deployment/{deployment}:{container}" for deployment, container in sorted(unmatched)
                 )
                 raise RuntimeError(f"deployment environment override targets were not found: {targets}")
+            if unmatched_images:
+                images = ", ".join(sorted(unmatched_images))
+                raise RuntimeError(f"deployment image override targets were not found: {images}")
 
             yield rendered_path
 

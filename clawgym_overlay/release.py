@@ -99,6 +99,7 @@ _SCHEMAS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 "backend",
                 "isolation",
                 "timeout_seconds",
+                "deployment_lock_digest",
             }
         ),
     ),
@@ -184,6 +185,8 @@ def _validate_manifest(kind: str, document: Mapping[str, Any]) -> None:
         timeout = document["timeout_seconds"]
         if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
             raise ContractValidationError("timeout_seconds must be a positive integer")
+        if not re.fullmatch(r"[0-9a-f]{64}", _string(document["deployment_lock_digest"], "deployment_lock_digest")):
+            raise ContractValidationError("deployment_lock_digest must be a SHA-256 digest")
 
 
 def load_release_manifests(root: str | Path) -> dict[str, dict[str, Any]]:
