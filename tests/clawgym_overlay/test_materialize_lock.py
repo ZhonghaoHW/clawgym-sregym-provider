@@ -56,6 +56,7 @@ def test_preload_images_uses_only_locked_sources_and_declared_targets() -> None:
         "clawgym-formal",
         runner=lambda command, **kwargs: calls.append((command, kwargs)),
         nodes=("formal-control-plane", "formal-worker"),
+        ready_checker=lambda node, source: False,
     )
 
     images = [item for item in document["artifacts"] if item["name"].startswith("runtime-image.")]
@@ -91,6 +92,7 @@ def test_preload_failure_identifies_only_locked_artifact_and_stage() -> None:
             "clawgym-formal",
             runner=fail_load,
             nodes=("formal-control-plane",),
+            ready_checker=lambda node, source: False,
         )
 
 
@@ -112,7 +114,24 @@ def test_preload_retries_transient_control_plane_pull() -> None:
         runner=transient_pull,
         nodes=("formal-control-plane",),
         sleeper=sleeps.append,
+        ready_checker=lambda node, source: False,
     )
 
     assert attempts >= 3
     assert sleeps[:2] == [30, 60]
+
+
+def test_preload_reuses_complete_control_plane_content_without_registry_pull() -> None:
+    document = lock_fixture()
+    calls = []
+
+    preload_runtime_images(
+        document,
+        "clawgym-formal",
+        runner=lambda command, **kwargs: calls.append(command),
+        nodes=("formal-control-plane",),
+        ready_checker=lambda node, source: True,
+    )
+
+    assert not any(command[7:8] == ("pull",) for command in calls)
+    assert any(command[7:8] == ("export",) for command in calls)

@@ -69,6 +69,7 @@ def preload_runtime_images(
     runner: Callable[..., Any] = subprocess.run,
     nodes: tuple[str, ...] | None = None,
     sleeper: Callable[[float], None] = time.sleep,
+    ready_checker: Callable[[str, str], bool] | None = None,
 ) -> dict[str, Any]:
     """Pull each locked runtime digest directly into every Kind node."""
 
@@ -92,6 +93,19 @@ def preload_runtime_images(
         raise LockedRuntimeError("Kind node inventory must contain one control plane")
     control_node = control_nodes[0]
     worker_nodes = tuple(node for node in nodes if node != control_node)
+    if ready_checker is None:
+        def ready_checker(node: str, source: str) -> bool:
+            completed = subprocess.run(
+                (
+                    "docker", "exec", "--privileged", node,
+                    "ctr", "--namespace=k8s.io", "images", "check", "--quiet",
+                    f"name=={source}",
+                ),
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            return completed.returncode == 0 and source in completed.stdout.splitlines()
 
     def canonical_target(reference: str) -> str:
         head = reference.split("/", maxsplit=1)[0]
@@ -139,16 +153,17 @@ def preload_runtime_images(
                     sleeper(min(30 * (2**attempt), 240))
 
         try:
-            execute(
-                "pull",
-                (
-                    "docker", "exec", "--privileged", control_node,
-                    "ctr", "--namespace=k8s.io", "images", "pull",
-                    "--platform", platform, source,
-                ),
-                attempts=5,
-                stdout=subprocess.DEVNULL,
-            )
+            if not ready_checker(control_node, source):
+                execute(
+                    "pull",
+                    (
+                        "docker", "exec", "--privileged", control_node,
+                        "ctr", "--namespace=k8s.io", "images", "pull",
+                        "--platform", platform, source,
+                    ),
+                    attempts=5,
+                    stdout=subprocess.DEVNULL,
+                )
             execute(
                 "tag",
                 (
