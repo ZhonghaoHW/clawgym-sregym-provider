@@ -23,7 +23,17 @@ class Wrk2:
     Persistent workload generator
     """
 
-    def __init__(self, rate, dist="norm", connections=2, duration=6, threads=2, latency=True, namespace="default"):
+    def __init__(
+        self,
+        rate,
+        dist="norm",
+        connections=2,
+        duration=6,
+        threads=2,
+        latency=True,
+        namespace="default",
+        image="deathstarbench/wrk2-client:latest",
+    ):
         self.rate = rate
         self.dist = dist
         self.connections = connections
@@ -31,6 +41,7 @@ class Wrk2:
         self.threads = threads
         self.latency = latency
         self.namespace = namespace
+        self.image = image
 
         config.load_kube_config()
 
@@ -91,6 +102,7 @@ class Wrk2:
 
         job_template["metadata"]["name"] = job_name
         container = job_template["spec"]["template"]["spec"]["containers"][0]
+        container["image"] = self.image
         container["args"] = ["/bin/bash", "/scripts/wrk2-workload.sh"]
 
         job_template["spec"]["template"]["spec"]["volumes"] = [

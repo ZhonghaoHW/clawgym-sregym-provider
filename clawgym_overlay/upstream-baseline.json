@@ -48,12 +48,12 @@
   "core_patches": [
     {
       "path": "sregym/conductor/conductor.py",
-      "rationale": "clawgym_overlay/docs/core-patches/0001-conductor-lifecycle-seam.md",
+      "rationale": "clawgym_overlay/docs/core-patches/0002-locked-live-slice.md",
       "tests": [
         "tests/clawgym_overlay/test_conductor_lifecycle_seam.py",
         "tests/clawgym_overlay/test_wp4_core_patches.py"
       ],
-      "sha256": "f07ca2c3f923a39425bc614cc529ab06e7abd0a2316299f3f8f56d700580d9dd"
+      "sha256": "2cf9d12c27af8497493a267a9163a1c790edfc6d0ecc13bc0c3621e0edab8baf"
     },
     {
       "path": "sregym/service/apps/hotel_reservation.py",
@@ -78,6 +78,22 @@
         "tests/clawgym_overlay/test_locked_runtime.py"
       ],
       "sha256": "f56efaa94b882d71ed62b5eaf4a0985ef0dad1538ac9f264ca0ae311ba7dbc61"
+    },
+    {
+      "path": "sregym/generators/workload/wrk2.py",
+      "rationale": "clawgym_overlay/docs/core-patches/0002-locked-live-slice.md",
+      "tests": [
+        "tests/clawgym_overlay/test_wp4_core_patches.py"
+      ],
+      "sha256": "2936e8ed12c66e660b435bc8e9d92e01c676e36041791ecde9489de86cb49e65"
+    },
+    {
+      "path": "sregym/service/mcp_server.py",
+      "rationale": "clawgym_overlay/docs/core-patches/0002-locked-live-slice.md",
+      "tests": [
+        "tests/clawgym_overlay/test_wp4_core_patches.py"
+      ],
+      "sha256": "f4788bfb5279658444a7ce0a8dcef73330b4beb7a41a6b7ea8f6992ce48e3338"
     }
   ]
 }

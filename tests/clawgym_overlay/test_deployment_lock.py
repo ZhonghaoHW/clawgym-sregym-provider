@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 
 import pytest
 
 from clawgym.contracts import ContractValidationError
-from clawgym_overlay.deployment_lock import deployment_lock_digest, validate_deployment_lock
+from clawgym_overlay.deployment_lock import (
+    deployment_lock_digest,
+    load_deployment_lock,
+    validate_deployment_lock,
+)
+
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def lock_fixture():
@@ -21,7 +30,17 @@ def lock_fixture():
         "openebs-manifest": "manifest",
         "loki-chart": "chart",
         "promtail-chart": "chart",
-        "runtime-image.recommendation": "image",
+        "runtime-image.application.recommendation": "image",
+        "runtime-image.mcp-server": "image",
+        "runtime-image.workload": "image",
+        "runtime-image.probe": "image",
+        "runtime-image.infrastructure.metrics": "image",
+        "kind-bundled-image.coredns": "image",
+        "kind-bundled-image.etcd": "image",
+        "kind-bundled-image.kube-apiserver": "image",
+        "kind-bundled-image.kube-controller-manager": "image",
+        "kind-bundled-image.kube-scheduler": "image",
+        "kind-bundled-image.local-path-provisioner": "image",
     }
     artifacts = []
     for index, (name, kind) in enumerate(names_and_kinds.items()):
@@ -55,7 +74,16 @@ def test_complete_lock_has_stable_digest() -> None:
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
-        (lambda document: document["artifacts"].pop(), "runtime images"),
+        (
+            lambda document: document.update(
+                artifacts=[
+                    item
+                    for item in document["artifacts"]
+                    if not item["name"].startswith("runtime-image.")
+                ]
+            ),
+            "missing artifacts",
+        ),
         (
             lambda document: document["artifacts"][0].update(version="latest"),
             "immutable",
@@ -88,3 +116,13 @@ def test_each_artifact_changes_lock_digest() -> None:
         candidate = copy.deepcopy(document)
         candidate["artifacts"][index]["version"] += ".1"
         assert deployment_lock_digest(candidate) != baseline
+
+
+def test_committed_wp4_lock_is_valid_and_bound_by_execution_profile() -> None:
+    document = load_deployment_lock(ROOT / "clawgym_overlay/deployment.wp4.lock.json")
+    profile = json.loads(
+        (ROOT / "clawgym_overlay/manifests/execution.sregym-container.v1.json").read_text()
+    )
+
+    assert len(document["artifacts"]) == 48
+    assert profile["deployment_lock_digest"] == deployment_lock_digest(document)

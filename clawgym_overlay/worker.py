@@ -92,6 +92,7 @@ def execute(args: argparse.Namespace) -> None:
         phase_probe=SREGymLivePhaseProbe(
             conductor,
             telemetry_capture=telemetry.capture,
+            runtime_image_inventory=lambda: locked_runtime.cluster_image_inventory(conductor),
             baseline_window_seconds=manifests["fault"]["steady_state"][
                 "baseline_window_seconds"
             ],
@@ -132,6 +133,11 @@ def execute(args: argparse.Namespace) -> None:
                 "provider_revision": args.provider_revision,
             }
         ),
+        media_type="application/json",
+    )
+    sink.write_bytes(
+        "host/deployment-cache.json",
+        canonical_json_bytes(locked_runtime.cache_summary()),
         media_type="application/json",
     )
     result = execute_worker(

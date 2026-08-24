@@ -26,6 +26,15 @@ REQUIRED_ARTIFACTS: Final = frozenset(
         "openebs-manifest",
         "loki-chart",
         "promtail-chart",
+        "runtime-image.mcp-server",
+        "runtime-image.workload",
+        "runtime-image.probe",
+        "kind-bundled-image.coredns",
+        "kind-bundled-image.etcd",
+        "kind-bundled-image.kube-apiserver",
+        "kind-bundled-image.kube-controller-manager",
+        "kind-bundled-image.kube-scheduler",
+        "kind-bundled-image.local-path-provisioner",
     }
 )
 ARTIFACT_KINDS: Final = frozenset({"package", "binary", "manifest", "image", "chart"})

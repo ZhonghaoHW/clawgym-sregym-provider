@@ -1,10 +1,15 @@
 import logging
 import os
+import shutil
 import socket
 import subprocess
+import tempfile
 import time
+from contextlib import contextmanager
+from pathlib import Path
 
 import requests
+import yaml
 
 from sregym.paths import MCP_SERVER_K8S
 from sregym.service.kubectl import KubeCtl
@@ -13,12 +18,40 @@ logger = logging.getLogger("all.sregym.mcp_server")
 
 
 class MCPServer:
-    def __init__(self):
+    def __init__(self, image_override: str | None = None):
         self.namespace = "sregym"
         self.service_name = "mcp-server"
         self.port = 9954
         self.port_forward_process = None
         self.kubectl = KubeCtl()
+        self.image_override = image_override
+
+    @contextmanager
+    def _deployment_resources(self):
+        if self.image_override is None:
+            yield MCP_SERVER_K8S
+            return
+        repository, separator, digest = self.image_override.rpartition("@sha256:")
+        if not separator or not repository or len(digest) != 64:
+            raise RuntimeError("MCP image override must be an immutable SHA-256 OCI reference")
+        with tempfile.TemporaryDirectory(prefix="sregym-mcp-") as temporary_dir:
+            resources = Path(temporary_dir) / "k8s"
+            shutil.copytree(MCP_SERVER_K8S, resources)
+            kustomization_path = resources / "kustomization.yaml"
+            with kustomization_path.open(encoding="utf-8") as handle:
+                kustomization = yaml.safe_load(handle)
+            image = next(
+                (item for item in kustomization.get("images", []) if item.get("name") == "sregym"),
+                None,
+            )
+            if image is None:
+                raise RuntimeError("MCP kustomization does not declare the sregym image")
+            image["newName"] = repository
+            image["digest"] = f"sha256:{digest}"
+            image.pop("newTag", None)
+            with kustomization_path.open("w", encoding="utf-8") as handle:
+                yaml.safe_dump(kustomization, handle, sort_keys=False)
+            yield resources
 
     def _is_running(self) -> bool:
         """Check if the MCP server deployment already exists and is ready."""
@@ -52,7 +85,8 @@ class MCPServer:
                 self.start_port_forward()
             return
 
-        self.kubectl.exec_command(f"kubectl apply -k {MCP_SERVER_K8S}")
+        with self._deployment_resources() as resources:
+            self.kubectl.exec_command(f"kubectl apply -k {resources}")
         self.kubectl.wait_for_ready(self.namespace)
         self.start_port_forward()
         logger.info("MCP server deployed successfully.")

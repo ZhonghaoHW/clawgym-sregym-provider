@@ -88,6 +88,23 @@ def test_reset_proves_the_declared_steady_state_window() -> None:
     assert sleeps == [5, 5]
 
 
+def test_reset_requires_locked_runtime_image_inventory() -> None:
+    probe, _, _ = phase_probe()
+    probe.runtime_image_inventory = lambda: {
+        "passed": True,
+        "observed_image_identity_count": 3,
+        "observed_image_set_digest": "a" * 64,
+    }
+    result = probe("reset")
+    assert result["passed"] is True
+    assert result["runtime_image_inventory"]["observed_image_identity_count"] == 3
+
+    probe.runtime_image_inventory = lambda: {"passed": False}
+    result = probe("reset")
+    assert result["passed"] is False
+    assert "runtime-image-inventory-invalid" in result["abort_reasons"]
+
+
 def test_telemetry_snapshot_exports_only_count_status_and_digest() -> None:
     snapshotter = SREGymLiveTelemetrySnapshotter(
         (

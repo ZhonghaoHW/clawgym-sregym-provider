@@ -43,6 +43,8 @@ class ConductorConfig:
     metrics_server_manifest: str | None = None
     openebs_manifest: str | None = None
     application_image_overrides: dict[str, str] | None = None
+    mcp_image: str | None = None
+    workload_image: str | None = None
 
 
 class Conductor:
@@ -56,7 +58,7 @@ class Conductor:
         self.jaeger = Jaeger()
         self.otel_collector = OtelCollector()
         self.loki = Loki()
-        self.mcp_server = MCPServer()
+        self.mcp_server = MCPServer(image_override=self.config.mcp_image)
         self.apps = AppRegistry()
         self.agent_name = None
 
@@ -480,6 +482,12 @@ class Conductor:
             if not hasattr(self.app, "deployment_image_overrides"):
                 raise RuntimeError("selected application does not support immutable image overrides")
             self.app.deployment_image_overrides = dict(self.config.application_image_overrides)
+        if self.config.workload_image is not None:
+            workload_manager = getattr(self.app, "wrk", None)
+            workload = getattr(workload_manager, "wrk", None)
+            if workload is None or not hasattr(workload, "image"):
+                raise RuntimeError("selected application does not support an immutable workload image")
+            workload.image = self.config.workload_image
         self.detection_oracle = DetectionOracle(self.problem)
         self.results = {}
 

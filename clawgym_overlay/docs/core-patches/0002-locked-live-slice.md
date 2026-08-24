@@ -11,6 +11,16 @@ renders a temporary manifest tree and requires every supplied image override
 to match. Loki accepts local, checksum-verified Loki and Promtail chart
 archives. No ClawGym type is imported by these core modules.
 
+The same neutral configuration seam pins two remaining runtime inputs that
+upstream expresses as `latest`: the MCP deployment image and the wrk2 workload
+image. MCP renders a temporary Kustomize tree with an OCI digest, and the
+workload generator writes its configured digest into the Job before creation.
+The tracked upstream manifests are never rewritten in place. The overlay also
+compares the live container image identities with the deployment lock during
+the reset postcondition; Kind-bundled control-plane images are covered by the
+pinned Kind node image rather than represented as independently pullable
+artifacts.
+
 For `network_policy_block`, an absent NetworkPolicy is successful idempotent
 recovery, while non-404 Kubernetes errors propagate to the host instead of
 being hidden by the generic recovery decorator. Focused tests execute the

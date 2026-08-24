@@ -21,6 +21,7 @@ class SREGymLivePhaseProbe:
     namespace: str = "hotel-reservation"
     policy_name: str = "deny-all-recommendation"
     telemetry_capture: Callable[[str, bool], Mapping[str, Any]] | None = None
+    runtime_image_inventory: Callable[[], Mapping[str, Any]] | None = None
     baseline_window_seconds: int = 0
     baseline_sample_interval_seconds: int = 5
     sleep: Callable[[float], None] = time.sleep
@@ -107,7 +108,19 @@ class SREGymLivePhaseProbe:
             application_ready = self._application_ready()
             policy_present = self._policy_exists()
             connectivity_healthy, baseline_samples = self._baseline_connectivity()
-            passed = nodes_ready and application_ready and not policy_present and connectivity_healthy
+            image_inventory = (
+                dict(self.runtime_image_inventory())
+                if self.runtime_image_inventory is not None
+                else None
+            )
+            image_inventory_ok = image_inventory is None or image_inventory.get("passed") is True
+            passed = (
+                nodes_ready
+                and application_ready
+                and not policy_present
+                and connectivity_healthy
+                and image_inventory_ok
+            )
         elif phase == "fault":
             application_ready = self._application_ready()
             policy_present = self._policy_exists()
@@ -150,6 +163,8 @@ class SREGymLivePhaseProbe:
             abort_reasons.append("telemetry-unavailable")
         if duration_exceeded:
             abort_reasons.append("max-experiment-duration-exceeded")
+        if phase == "reset" and not image_inventory_ok:
+            abort_reasons.append("runtime-image-inventory-invalid")
         passed = passed and not abort_reasons
         return {
             "passed": passed,
@@ -159,6 +174,7 @@ class SREGymLivePhaseProbe:
             "connectivity_healthy": connectivity_healthy,
             "baseline_window_seconds": self.baseline_window_seconds if phase == "reset" else 0,
             "baseline_samples": baseline_samples if phase == "reset" else 0,
+            "runtime_image_inventory": image_inventory if phase == "reset" else None,
             "abort_reasons": abort_reasons,
             "telemetry_window": telemetry,
         }

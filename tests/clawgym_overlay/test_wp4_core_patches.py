@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -115,3 +116,118 @@ def test_hotel_application_renders_every_locked_image_override(tmp_path: Path) -
     with pytest.raises(RuntimeError, match="image override targets were not found"):
         with rendered(app):
             pass
+
+
+def test_mcp_server_renders_digest_override_without_mutating_source() -> None:
+    deployment_resources = isolated_method(
+        ROOT / "sregym/service/mcp_server.py",
+        "MCPServer",
+        "_deployment_resources",
+        {
+            "contextmanager": contextlib.contextmanager,
+            "MCP_SERVER_K8S": ROOT / "mcp_server/k8s",
+            "Path": Path,
+            "shutil": shutil,
+            "tempfile": tempfile,
+            "yaml": yaml,
+        },
+    )
+    source = ROOT / "mcp_server/k8s/kustomization.yaml"
+    before = source.read_bytes()
+    server = type("Server", (), {})()
+    server.image_override = "ghcr.io/sregym/sregym-mcp@sha256:" + "a" * 64
+
+    with deployment_resources(server) as resources:
+        document = yaml.safe_load((resources / "kustomization.yaml").read_text())
+        image = next(item for item in document["images"] if item["name"] == "sregym")
+        assert image == {
+            "name": "sregym",
+            "newName": "ghcr.io/sregym/sregym-mcp",
+            "digest": "sha256:" + "a" * 64,
+        }
+
+    assert source.read_bytes() == before
+
+
+def test_mcp_server_rejects_mutable_image_override() -> None:
+    deployment_resources = isolated_method(
+        ROOT / "sregym/service/mcp_server.py",
+        "MCPServer",
+        "_deployment_resources",
+        {
+            "contextmanager": contextlib.contextmanager,
+            "MCP_SERVER_K8S": ROOT / "mcp_server/k8s",
+            "Path": Path,
+            "shutil": shutil,
+            "tempfile": tempfile,
+            "yaml": yaml,
+        },
+    )
+    server = type("Server", (), {})()
+    server.image_override = "ghcr.io/sregym/sregym-mcp:latest"
+    with pytest.raises(RuntimeError, match="immutable"):
+        with deployment_resources(server):
+            pass
+
+
+def test_wrk_job_uses_configured_immutable_image(tmp_path: Path) -> None:
+    create_wrk_job = isolated_method(
+        ROOT / "sregym/generators/workload/wrk2.py",
+        "Wrk2",
+        "create_wrk_job",
+        {},
+    )
+    template = tmp_path / "generators/workload"
+    template.mkdir(parents=True)
+    (template / "wrk-job-template.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "metadata": {"name": "template"},
+                "spec": {
+                    "template": {
+                        "spec": {
+                            "containers": [{"name": "workload", "image": "mutable:latest"}],
+                            "volumes": [],
+                        }
+                    }
+                },
+            }
+        )
+    )
+    created = []
+
+    class MissingJob(Exception):
+        status = 404
+
+    class Batch:
+        def read_namespaced_job(self, **kwargs):
+            raise MissingJob()
+
+        def create_namespaced_job(self, namespace, body):
+            created.append(body)
+            return type("Response", (), {"metadata": type("Metadata", (), {"name": "wrk"})()})()
+
+    fake_client = type(
+        "Client",
+        (),
+        {
+            "BatchV1Api": lambda: Batch(),
+            "V1DeleteOptions": object,
+            "exceptions": type("Exceptions", (), {"ApiException": MissingJob}),
+        },
+    )
+    fake_logger = type("Logger", (), {"info": lambda *args, **kwargs: None, "error": lambda *args, **kwargs: None})()
+    create_wrk_job.__globals__.update(
+        BASE_DIR=tmp_path,
+        client=fake_client,
+        logger=fake_logger,
+        yaml=yaml,
+    )
+    wrk = type("Wrk", (), {})()
+    wrk.namespace = "hotel-reservation"
+    wrk.image = "deathstarbench/wrk2-client@sha256:" + "b" * 64
+    wrk.wait_for_job_deletion = lambda *args, **kwargs: None
+
+    create_wrk_job(wrk, "wrk2-job", "hotel-reservation", Path("payload.lua"))
+
+    assert created[0]["spec"]["template"]["spec"]["containers"][0]["image"] == wrk.image

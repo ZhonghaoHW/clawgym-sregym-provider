@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -22,6 +23,16 @@ class LockedRuntime:
         self.document = document
         self.cache_root = root.resolve(strict=True)
         self.artifacts = {item["name"]: item for item in document["artifacts"]}
+        expected_cache = {
+            name
+            for name, artifact in self.artifacts.items()
+            if artifact["kind"] in {"manifest", "chart"}
+        }
+        actual_cache = {path.name for path in self.cache_root.iterdir()}
+        if actual_cache != expected_cache:
+            raise LockedRuntimeError("deployment cache does not exactly match locked deployment assets")
+        for name in sorted(expected_cache):
+            self.cached_artifact(name)
 
     def cached_artifact(self, name: str) -> Path:
         artifact = self.artifacts[name]
@@ -38,26 +49,119 @@ class LockedRuntime:
         return path
 
     def image_overrides(self) -> dict[str, str]:
+        def repository(reference: str) -> str:
+            without_digest = reference.split("@", maxsplit=1)[0]
+            head, separator, tail = without_digest.rpartition("/")
+            if ":" in tail:
+                tail = tail.split(":", maxsplit=1)[0]
+            return f"{head}{separator}{tail}"
+
         return {
-            artifact["target"]: artifact["source"].removeprefix("oci://")
+            repository(artifact["target"]): artifact["source"].removeprefix("oci://")
             for artifact in self.document["artifacts"]
-            if artifact["name"].startswith("runtime-image.")
+            if artifact["name"].startswith("runtime-image.application.")
         }
+
+    def image_reference(self, name: str) -> str:
+        artifact = self.artifacts[name]
+        if artifact["kind"] != "image":
+            raise LockedRuntimeError(f"{name} is not a locked image")
+        return artifact["source"].removeprefix("oci://")
+
+    @staticmethod
+    def _image_digest(reference: str) -> str:
+        match = re.search(r"sha256:([0-9a-f]{64})$", reference)
+        if match is None:
+            raise LockedRuntimeError("observed runtime image is not content addressed")
+        return match.group(1)
 
     def verify_required_images(self, observed_images: set[str]) -> None:
         declared = {
-            artifact["source"].removeprefix("oci://")
+            self._image_digest(artifact["source"])
             for artifact in self.document["artifacts"]
             if artifact["kind"] == "image"
         }
-        undeclared = observed_images - declared
+        observed = {self._image_digest(reference) for reference in observed_images}
+        undeclared = observed - declared
         if undeclared:
             raise LockedRuntimeError("runtime contains images absent from deployment lock")
+
+    def cluster_image_inventory(self, conductor: Any) -> dict[str, Any]:
+        pods = conductor.kubectl.core_v1_api.list_pod_for_all_namespaces().items
+        declared_digests = {
+            self._image_digest(artifact["source"])
+            for artifact in self.document["artifacts"]
+            if artifact["kind"] == "image" and artifact["name"].startswith("runtime-image.")
+        }
+        bundled_targets = {
+            artifact["target"]
+            for artifact in self.document["artifacts"]
+            if artifact["kind"] == "image" and artifact["name"].startswith("kind-bundled-image.")
+        }
+        observed_tokens: list[str] = []
+        container_count = 0
+        for pod in pods:
+            specifications = {
+                container.name: container.image
+                for containers in (
+                    pod.spec.init_containers or [],
+                    pod.spec.containers or [],
+                )
+                for container in containers
+            }
+            for statuses in (
+                pod.status.init_container_statuses or [],
+                pod.status.container_statuses or [],
+            ):
+                for status in statuses:
+                    if not status.image_id:
+                        continue
+                    container_count += 1
+                    if "@sha256:" in status.image_id:
+                        digest = self._image_digest(status.image_id)
+                        if digest not in declared_digests:
+                            raise LockedRuntimeError(
+                                "runtime contains images absent from deployment lock"
+                            )
+                        observed_tokens.append(f"digest:{digest}")
+                        continue
+                    target = specifications.get(status.name)
+                    if target not in bundled_targets:
+                        raise LockedRuntimeError(
+                            "runtime contains an unrecognized image bundled in the Kind node"
+                        )
+                    observed_tokens.append(f"kind-bundled:{target}")
+        tokens = sorted(observed_tokens)
+        return {
+            "passed": True,
+            "observed_container_count": container_count,
+            "observed_image_identity_count": len(set(tokens)),
+            "observed_image_set_digest": hashlib.sha256("\n".join(tokens).encode()).hexdigest(),
+        }
+
+    def cache_summary(self) -> dict[str, Any]:
+        assets = [
+            {
+                "name": name,
+                "integrity": self.artifacts[name]["integrity"],
+            }
+            for name in sorted(self.artifacts)
+            if self.artifacts[name]["kind"] in {"manifest", "chart"}
+        ]
+        return {
+            "schema_id": "clawgym.sregym_deployment_cache.v1",
+            "asset_count": len(assets),
+            "asset_set_digest": hashlib.sha256(
+                "\n".join(f"{item['name']}:{item['integrity']}" for item in assets).encode()
+            ).hexdigest(),
+        }
 
     def configure_conductor(self, config: Any) -> None:
         config.metrics_server_manifest = str(self.cached_artifact("metrics-server-manifest"))
         config.openebs_manifest = str(self.cached_artifact("openebs-manifest"))
         config.application_image_overrides = self.image_overrides()
+        config.mcp_image = self.image_reference("runtime-image.mcp-server")
+        config.workload_image = self.image_reference("runtime-image.workload")
 
     def configure_services(self, conductor: Any) -> None:
         conductor.loki.helm_configs.update(
