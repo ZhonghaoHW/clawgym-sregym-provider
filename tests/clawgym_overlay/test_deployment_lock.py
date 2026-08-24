@@ -124,5 +124,5 @@ def test_committed_wp4_lock_is_valid_and_bound_by_execution_profile() -> None:
         (ROOT / "clawgym_overlay/manifests/execution.sregym-container.v1.json").read_text()
     )
 
-    assert len(document["artifacts"]) == 48
+    assert len(document["artifacts"]) == 50
     assert profile["deployment_lock_digest"] == deployment_lock_digest(document)
