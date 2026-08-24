@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from clawgym.artifacts import FilesystemArtifactSink
 from clawgym.contracts import (
     AgentRelease,
@@ -23,7 +25,8 @@ from clawgym.providers import (
 )
 from clawgym.runtime import LifecycleController
 from clawgym_overlay.composition import register_sregym_providers
-from clawgym_overlay.providers import SREGymOracleProvider
+from clawgym_overlay.providers import SREGymEnvironmentValidationAdapter, SREGymOracleProvider
+from clawgym_overlay.providers.sregym import _SREGymAccessHandle
 from clawgym_overlay.release import build_environment_release, load_release_manifests
 
 
@@ -124,7 +127,16 @@ def test_real_provider_classes_close_an_in_memory_episode(tmp_path: Path) -> Non
         registry,
         conductor=conductor,
         manifests=manifests,
-        snapshotter=lambda: {"prometheus": [], "loki": [], "jaeger": []},
+        snapshotter=lambda: {
+            source: {
+                "status": "empty",
+                "result_count": 0,
+                "summary_digest": sha256_digest({"source": source, "results": []}),
+            }
+            for source in ("prometheus", "loki", "jaeger")
+        },
+        phase_probe=lambda phase: {"passed": True, "phase": phase},
+        access_verifier=lambda path: {"passed": True, "filtered": True},
     )
     assert len(bindings) == 5
     assert conductor.config.defer_cleanup is True
@@ -222,3 +234,53 @@ def test_oracle_failure_overrides_agent_claimed_pass() -> None:
     evaluation = provider.evaluate(run, {"agent_claimed_verdict": "pass"})
     assert evaluation.verdict == "fail"
     assert evaluation.outcome.status == "succeeded"
+
+
+def test_failed_phase_postcondition_fails_receipt() -> None:
+    conductor = FakeConductor()
+    manifests = load_release_manifests(ROOT / "clawgym_overlay" / "manifests")
+    bindings = register_sregym_providers(
+        ProviderRegistry(),
+        conductor=conductor,
+        manifests=manifests,
+        snapshotter=lambda: {},
+        phase_probe=lambda phase: {"passed": phase != "fault"},
+    )
+    environment = next(
+        binding.implementation
+        for binding in bindings
+        if binding.definition.provider_type == "environment_provider"
+    )
+    run = SimpleNamespace(manifest_digest="a" * 64)
+    assert environment.inject_fault(run).status == "failed"
+
+
+def test_validation_adapter_is_no_model_and_lane_restricted() -> None:
+    calls = []
+
+    def delete_policy(path, namespace, name):
+        calls.append((path, namespace, name))
+        return {"deleted": True}
+
+    adapter = SREGymEnvironmentValidationAdapter(
+        sha256_digest({"adapter": "environment-validation"}),
+        delete_policy,
+        clock=lambda: NOW,
+    )
+    access = _SREGymAccessHandle("/temporary/filtered-kubeconfig")
+    run = SimpleNamespace(lane="environment_validation", manifest_digest="a" * 64)
+
+    result = adapter.invoke(run, access)
+
+    assert result.amount == "0"
+    assert isinstance(result.duration_ms, int)
+    assert result.outcome.status == "succeeded"
+    assert calls == [
+        (
+            "/temporary/filtered-kubeconfig",
+            "hotel-reservation",
+            "deny-all-recommendation",
+        )
+    ]
+    with pytest.raises(RuntimeError, match="environment_validation"):
+        adapter.invoke(SimpleNamespace(lane="evaluation", manifest_digest="a" * 64), access)

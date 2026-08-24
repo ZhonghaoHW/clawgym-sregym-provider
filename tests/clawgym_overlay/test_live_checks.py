@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from clawgym_overlay.live_checks import (
+    SREGymLivePhaseProbe,
+    SREGymLiveTelemetrySnapshotter,
+    SafeTelemetryQuery,
+)
+
+
+class Missing(Exception):
+    status = 404
+
+
+class FakeCore:
+    namespace_exists = True
+
+    def list_node(self):
+        condition = SimpleNamespace(type="Ready", status="True")
+        return SimpleNamespace(
+            items=[SimpleNamespace(status=SimpleNamespace(conditions=[condition])) for _ in range(4)]
+        )
+
+    def read_namespace(self, name):
+        if not self.namespace_exists:
+            raise Missing()
+        return object()
+
+
+class FakeApps:
+    def list_namespaced_deployment(self, namespace):
+        status = SimpleNamespace(ready_replicas=1, unavailable_replicas=0)
+        spec = SimpleNamespace(replicas=1)
+        return SimpleNamespace(items=[SimpleNamespace(status=status, spec=spec)])
+
+
+class FakeNetwork:
+    present = False
+
+    def read_namespaced_network_policy(self, name, namespace):
+        if not self.present:
+            raise Missing()
+        return object()
+
+
+def phase_probe():
+    core = FakeCore()
+    network = FakeNetwork()
+    oracle = SimpleNamespace(_run_recommendation_probe=lambda: not network.present)
+    problem = SimpleNamespace(networking_v1=network, mitigation_oracle=oracle)
+    conductor = SimpleNamespace(
+        kubectl=SimpleNamespace(core_v1_api=core, apps_v1_api=FakeApps()),
+        current_problem=problem,
+    )
+    return SREGymLivePhaseProbe(conductor), core, network
+
+
+def test_live_phase_probe_distinguishes_healthy_fault_and_cleanup() -> None:
+    probe, core, network = phase_probe()
+    assert probe("reset")["passed"] is True
+    network.present = True
+    fault = probe("fault")
+    assert fault["passed"] is True
+    assert fault["connectivity_healthy"] is False
+    network.present = False
+    assert probe("recovery")["passed"] is True
+    core.namespace_exists = False
+    assert probe("cleanup")["passed"] is True
+
+
+def test_telemetry_snapshot_exports_only_count_status_and_digest() -> None:
+    snapshotter = SREGymLiveTelemetrySnapshotter(
+        (
+            SafeTelemetryQuery("prometheus", lambda: {"data": {"result": [{"value": "raw"}]}}),
+            SafeTelemetryQuery("loki", lambda: {"data": {"result": []}}),
+            SafeTelemetryQuery("jaeger", lambda: {"data": [{"trace": "raw"}]}),
+        )
+    )
+    result = snapshotter()
+    assert result["prometheus"]["status"] == "success"
+    assert result["loki"]["status"] == "empty"
+    assert result["jaeger"]["result_count"] == 1
+    assert "raw" not in str(result)
+
+
+def test_telemetry_query_failure_is_distinct_from_empty() -> None:
+    def fail():
+        raise TimeoutError("not retained")
+
+    snapshotter = SREGymLiveTelemetrySnapshotter(
+        (
+            SafeTelemetryQuery("prometheus", fail),
+            SafeTelemetryQuery("loki", lambda: {"data": {"result": []}}),
+            SafeTelemetryQuery("jaeger", lambda: {"data": []}),
+        )
+    )
+    result = snapshotter()
+    assert result["prometheus"]["status"] == "error"
+    assert result["loki"]["status"] == "empty"

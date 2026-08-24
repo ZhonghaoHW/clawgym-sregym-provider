@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -91,6 +92,7 @@ class SREGymEnvironmentProvider:
     immutable_configuration_digest: str
     problem_id: str
     task_stages: tuple[str, ...]
+    phase_probe: Callable[[str], Mapping[str, Any]] | None = None
     clock: Callable[[], str] = _utc_now
     provider_id: str = field(default="sregym.environment.v1", init=False)
     provider_type: str = field(default="environment_provider", init=False)
@@ -103,9 +105,12 @@ class SREGymEnvironmentProvider:
     def _call(self, phase: str, run_manifest: RunManifest, operation) -> LifecycleOutcome:
         started_at = self.clock()
         result = operation()
+        probe = self.phase_probe(phase) if self.phase_probe is not None else {"passed": True}
+        if not isinstance(probe, Mapping) or probe.get("passed") is not True:
+            probe = {"passed": False, "reason": "postcondition_failed"}
         completed_at = self.clock()
         status_value = str(result.get("status", "")) if isinstance(result, Mapping) else str(result)
-        failed = status_value in {"cleanup_failed", "failed", "not_loaded"} or status_value.startswith(
+        failed = probe["passed"] is not True or status_value in {"cleanup_failed", "failed", "not_loaded"} or status_value.startswith(
             "skipped"
         )
         return _outcome(
@@ -115,7 +120,11 @@ class SREGymEnvironmentProvider:
             started_at=started_at,
             completed_at=completed_at,
             run=run_manifest,
-            summary={"problem_id": self.problem_id, "result": status_value},
+            summary={
+                "problem_id": self.problem_id,
+                "result": status_value,
+                "postconditions": dict(probe),
+            },
         )
 
     def reset(self, run_manifest: RunManifest) -> LifecycleOutcome:
@@ -205,6 +214,7 @@ class SREGymToolAccessProvider:
     interfaces: tuple[str, ...]
     capabilities: tuple[str, ...]
     denied_namespaces: tuple[str, ...]
+    access_verifier: Callable[[str], Mapping[str, Any]] | None = None
     provider_id: str = field(default="sregym.filtered-tools.v1", init=False)
     provider_type: str = field(default="tool_access_provider", init=False)
 
@@ -213,6 +223,10 @@ class SREGymToolAccessProvider:
         path = self.conductor.get_agent_kubeconfig_path()
         if not path:
             raise RuntimeError("SREGym filtering proxy did not produce an access handle")
+        checks = self.access_verifier(path) if self.access_verifier is not None else {"passed": True}
+        if not isinstance(checks, Mapping) or checks.get("passed") is not True:
+            self.conductor.stop_k8s_proxy()
+            raise RuntimeError("filtered Kubernetes access failed its host verification")
         return ToolAccessGrant(
             handle=_SREGymAccessHandle(path),
             evidence=(
@@ -225,6 +239,7 @@ class SREGymToolAccessProvider:
                         "interfaces": list(self.interfaces),
                         "capabilities": list(self.capabilities),
                         "denied_namespaces": list(self.denied_namespaces),
+                        "access_checks": dict(checks),
                     },
                 ),
             ),
@@ -260,8 +275,29 @@ class SREGymObservationProvider:
         snapshot = self.snapshotter()
         if not isinstance(snapshot, Mapping):
             raise RuntimeError("observation snapshot must be an object")
-        configured = {source: source in snapshot for source in self.sources}
-        availability = "available" if any(bool(snapshot.get(source)) for source in self.sources) else "empty"
+        summaries: dict[str, dict[str, Any]] = {}
+        for source in self.sources:
+            value = snapshot.get(source)
+            if not isinstance(value, Mapping) or set(value) != {
+                "status",
+                "result_count",
+                "summary_digest",
+            }:
+                raise RuntimeError(f"{source} snapshot has an invalid safe summary")
+            if value["status"] not in {"success", "empty", "error"}:
+                raise RuntimeError(f"{source} snapshot status is invalid")
+            count = value["result_count"]
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                raise RuntimeError(f"{source} snapshot result_count is invalid")
+            digest = value["summary_digest"]
+            if not isinstance(digest, str) or len(digest) != 64:
+                raise RuntimeError(f"{source} snapshot digest is invalid")
+            summaries[source] = dict(value)
+        availability = "available" if any(
+            item["status"] == "success" for item in summaries.values()
+        ) else "empty"
+        if any(item["status"] == "error" for item in summaries.values()):
+            availability = "error"
         return (
             EvidencePayload(
                 artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-observations.json",
@@ -269,7 +305,7 @@ class SREGymObservationProvider:
                     "schema_id": "clawgym.sregym_observation_evidence.v1",
                     "provider_id": self.provider_id,
                     "availability": availability,
-                    "configured_sources": configured,
+                    "sources": summaries,
                 },
             ),
         )
@@ -289,3 +325,52 @@ class SREGymExecutionBackend:
         if result.duration_ms > self.timeout_seconds * 1000:
             raise TimeoutError("agent invocation exceeded immutable execution timeout")
         return result
+
+
+@dataclass(slots=True)
+class SREGymEnvironmentValidationAdapter:
+    """No-model adapter that removes exactly the selected NetworkPolicy."""
+
+    immutable_configuration_digest: str
+    delete_policy: Callable[[str, str, str], Mapping[str, Any]]
+    namespace: str = "hotel-reservation"
+    policy_name: str = "deny-all-recommendation"
+    clock: Callable[[], str] = _utc_now
+    provider_id: str = field(default="sregym.environment-validation.v1", init=False)
+    provider_type: str = field(default="agent_adapter", init=False)
+
+    def invoke(self, run_manifest: RunManifest, access_handle: object) -> AgentInvocationResult:
+        if run_manifest.lane != "environment_validation":
+            raise RuntimeError("environment validation adapter requires environment_validation lane")
+        if not isinstance(access_handle, _SREGymAccessHandle):
+            raise RuntimeError("environment validation adapter requires filtered SREGym access")
+        started_at = self.clock()
+        start = time.monotonic()
+        result = self.delete_policy(
+            access_handle.kubeconfig_path,
+            self.namespace,
+            self.policy_name,
+        )
+        duration_ms = max(0, int((time.monotonic() - start) * 1000))
+        status = "succeeded" if isinstance(result, Mapping) and result.get("deleted") is True else "failed"
+        completed_at = self.clock()
+        return AgentInvocationResult(
+            outcome=_outcome(
+                phase="agent_invocation",
+                provider_id=self.provider_id,
+                status=status,
+                started_at=started_at,
+                completed_at=completed_at,
+                run=run_manifest,
+                summary={
+                    "operation": "delete-network-policy",
+                    "namespace": self.namespace,
+                    "resource_name": self.policy_name,
+                    "deleted": status == "succeeded",
+                },
+            ),
+            submission={"operation": "delete-network-policy", "completed": status == "succeeded"},
+            amount="0",
+            currency="USD",
+            duration_ms=duration_ms,
+        )

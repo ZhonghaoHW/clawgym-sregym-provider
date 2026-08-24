@@ -2,6 +2,7 @@
 
 from clawgym_overlay.providers.sregym import (
     SREGymEnvironmentProvider,
+    SREGymEnvironmentValidationAdapter,
     SREGymExecutionBackend,
     SREGymObservationProvider,
     SREGymOracleProvider,
@@ -10,6 +11,7 @@ from clawgym_overlay.providers.sregym import (
 
 __all__ = [
     "SREGymEnvironmentProvider",
+    "SREGymEnvironmentValidationAdapter",
     "SREGymExecutionBackend",
     "SREGymObservationProvider",
     "SREGymOracleProvider",
