@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -339,40 +340,32 @@ def delete_validation_network_policy(
 def build_kubernetes_telemetry_snapshotter(conductor: Any) -> SREGymLiveTelemetrySnapshotter:
     """Bind three fixed read-only service-proxy queries to the host Kubernetes client."""
 
-    core = conductor.kubectl.core_v1_api
-
-    def service_query(name: str, path: str, query_params: tuple[tuple[str, str], ...]):
-        return lambda: core.api_client.call_api(
-            "/api/v1/namespaces/{namespace}/services/{name}/proxy/{path}",
-            "GET",
-            {"name": name, "namespace": "observe", "path": path},
-            list(query_params),
-            {"Accept": "*/*"},
-            response_type="str",
-            auth_settings=["BearerToken"],
-            _return_http_data_only=True,
-        )
+    def service_query(path: str):
+        command = f"kubectl get --raw {shlex.quote(path)}"
+        return lambda: conductor.kubectl.exec_command(command)
 
     return SREGymLiveTelemetrySnapshotter(
         (
             SafeTelemetryQuery(
                 "prometheus",
-                service_query("prometheus-server:80", "api/v1/query", (("query", "up"),)),
+                service_query(
+                    "/api/v1/namespaces/observe/services/prometheus-server:80/"
+                    "proxy/api/v1/query?query=up"
+                ),
             ),
             SafeTelemetryQuery(
                 "loki",
                 service_query(
-                    "loki-gateway:80",
-                    "loki/api/v1/query",
-                    (("query", '{namespace="hotel-reservation"}'),),
+                    "/api/v1/namespaces/observe/services/loki-gateway:80/"
+                    "proxy/loki/api/v1/query_range?"
+                    "query=%7Bnamespace%3D%22hotel-reservation%22%7D&limit=20"
                 ),
             ),
             SafeTelemetryQuery(
                 "jaeger",
                 service_query(
-                    "jaeger-out:16686",
-                    "api/traces",
-                    (("service", "frontend"), ("limit", "20")),
+                    "/api/v1/namespaces/observe/services/jaeger-out:16686/"
+                    "proxy/api/traces?service=frontend&limit=20"
                 ),
             ),
         )
