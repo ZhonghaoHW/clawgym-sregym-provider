@@ -89,7 +89,7 @@ class LockedRuntime:
     def cluster_image_inventory(self, conductor: Any) -> dict[str, Any]:
         pods = conductor.kubectl.core_v1_api.list_pod_for_all_namespaces().items
         declared_digests = {
-            self._image_digest(artifact["source"])
+            self._image_digest(artifact["platform_integrity"])
             for artifact in self.document["artifacts"]
             if artifact["kind"] == "image" and artifact["name"].startswith("runtime-image.")
         }

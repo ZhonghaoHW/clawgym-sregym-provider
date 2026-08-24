@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import subprocess
 
 import pytest
 
 from clawgym_overlay.locked_runtime import LockedRuntimeError
-from clawgym_overlay.materialize_lock import materialize_assets, preload_runtime_images
+from clawgym_overlay.materialize_lock import (
+    materialize_assets,
+    preload_runtime_images,
+    resolve_node_platform_digest,
+)
 from test_deployment_lock import lock_fixture
 
 
@@ -58,6 +63,7 @@ def test_preload_images_uses_only_locked_sources_and_declared_targets() -> None:
         nodes=("formal-control-plane", "formal-worker"),
         ready_checker=lambda node, source: False,
         host_seeder=lambda artifact, source, nodes: False,
+        platform_digest_resolver=lambda node, source, integrity, platform: integrity,
     )
 
     images = [item for item in document["artifacts"] if item["name"].startswith("runtime-image.")]
@@ -102,6 +108,7 @@ def test_preload_failure_identifies_only_locked_artifact_and_stage() -> None:
             nodes=("formal-control-plane",),
             ready_checker=lambda node, source: False,
             host_seeder=lambda artifact, source, nodes: False,
+            platform_digest_resolver=lambda node, source, integrity, platform: integrity,
         )
 
 
@@ -127,6 +134,7 @@ def test_preload_retries_transient_control_plane_pull() -> None:
         sleeper=sleeps.append,
         ready_checker=lambda node, source: False,
         host_seeder=lambda artifact, source, nodes: False,
+        platform_digest_resolver=lambda node, source, integrity, platform: integrity,
     )
 
     assert attempts >= 3
@@ -144,6 +152,7 @@ def test_preload_reuses_complete_control_plane_content_without_registry_pull() -
         nodes=("formal-control-plane",),
         ready_checker=lambda node, source: True,
         host_seeder=lambda artifact, source, nodes: False,
+        platform_digest_resolver=lambda node, source, integrity, platform: integrity,
     )
 
     assert not any(command[7:8] == ("pull",) for command in calls)
@@ -167,6 +176,7 @@ def test_default_readiness_requires_exportable_platform_content() -> None:
         nodes=("formal-control-plane",),
         host_seeder=lambda artifact, source, nodes: False,
         sleeper=lambda seconds: None,
+        platform_digest_resolver=lambda node, source, integrity, platform: integrity,
     )
 
     assert any(command[7:8] == ("pull",) for command in calls)
@@ -187,7 +197,58 @@ def test_preload_can_seed_only_verified_host_content_before_pull() -> None:
         nodes=("formal-control-plane",),
         ready_checker=lambda node, source: bool(seeded),
         host_seeder=seed,
+        platform_digest_resolver=lambda node, source, integrity, platform: integrity,
     )
 
     assert seeded
     assert all(item[0].startswith("sha256:") for item in seeded)
+
+
+def test_resolve_node_platform_digest_selects_locked_linux_amd64_child() -> None:
+    index_digest = "sha256:" + "a" * 64
+    platform_digest = "sha256:" + "b" * 64
+
+    def run(command, **kwargs):
+        if command[6:8] == ("images", "list"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=f"REF TYPE DIGEST SIZE PLATFORMS LABELS\nsource type {index_digest} 1 linux/amd64 -\n",
+            )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "manifests": [
+                        {
+                            "digest": platform_digest,
+                            "platform": {"os": "linux", "architecture": "amd64"},
+                        }
+                    ]
+                }
+            ).encode(),
+        )
+
+    assert resolve_node_platform_digest(
+        "formal-control-plane",
+        "registry.example/image@" + index_digest,
+        index_digest,
+        "linux/amd64",
+        runner=run,
+    ) == platform_digest
+
+
+def test_preload_rejects_platform_digest_mismatch() -> None:
+    document = lock_fixture()
+    with pytest.raises(LockedRuntimeError, match="platform digest mismatch"):
+        preload_runtime_images(
+            document,
+            "clawgym-formal",
+            runner=lambda command, **kwargs: None,
+            nodes=("formal-control-plane",),
+            ready_checker=lambda node, source: True,
+            host_seeder=lambda artifact, source, nodes: False,
+            platform_digest_resolver=lambda node, source, integrity, platform: "sha256:"
+            + "f" * 64,
+        )

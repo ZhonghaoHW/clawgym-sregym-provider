@@ -59,16 +59,21 @@ def validate_deployment_lock(document: Mapping[str, Any]) -> None:
     runtime_images = 0
     for index, artifact in enumerate(artifacts):
         location = f"artifacts[{index}]"
-        if not isinstance(artifact, Mapping) or set(artifact) != {
+        if not isinstance(artifact, Mapping):
+            raise ContractValidationError(f"{location} has invalid fields")
+        name = artifact.get("name")
+        expected_fields = {
             "name",
             "kind",
             "version",
             "source",
             "integrity",
             "target",
-        }:
+        }
+        if isinstance(name, str) and name.startswith("runtime-image."):
+            expected_fields.add("platform_integrity")
+        if set(artifact) != expected_fields:
             raise ContractValidationError(f"{location} has invalid fields")
-        name = artifact["name"]
         kind = artifact["kind"]
         version = artifact["version"]
         source = artifact["source"]
@@ -95,6 +100,10 @@ def validate_deployment_lock(document: Mapping[str, Any]) -> None:
             if "@sha256:" not in source or not source.endswith(integrity):
                 raise ContractValidationError(f"{location} image source must use its digest")
             if name.startswith("runtime-image."):
+                if not _DIGEST.fullmatch(artifact["platform_integrity"]):
+                    raise ContractValidationError(
+                        f"{location}.platform_integrity must be a SHA-256 digest"
+                    )
                 runtime_images += 1
         elif not isinstance(source, str) or not source.startswith("https://"):
             raise ContractValidationError(f"{location}.source must be an HTTPS identity")

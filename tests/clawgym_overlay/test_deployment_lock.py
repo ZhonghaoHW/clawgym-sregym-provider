@@ -57,6 +57,7 @@ def lock_fixture():
                 "source": source,
                 "integrity": digest,
                 "target": name,
+                **({"platform_integrity": digest} if name.startswith("runtime-image.") else {}),
             }
         )
     return {
@@ -96,6 +97,10 @@ def test_complete_lock_has_stable_digest() -> None:
         (
             lambda document: document["artifacts"][5].update(source="https://image/v1"),
             "OCI identity",
+        ),
+        (
+            lambda document: document["artifacts"][11].update(platform_integrity="invalid"),
+            "platform_integrity",
         ),
         (
             lambda document: document["artifacts"][0].update(source="http://mutable.invalid"),

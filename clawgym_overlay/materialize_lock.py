@@ -19,6 +19,57 @@ from clawgym_overlay.deployment_lock import load_deployment_lock, validate_deplo
 from clawgym_overlay.locked_runtime import LockedRuntime, LockedRuntimeError
 
 
+def resolve_node_platform_digest(
+    node: str,
+    source: str,
+    integrity: str,
+    platform: str,
+    *,
+    runner: Callable[..., Any] = subprocess.run,
+) -> str:
+    listed = runner(
+        (
+            "docker", "exec", "--privileged", node,
+            "ctr", "--namespace=k8s.io", "images", "list", f"name=={source}",
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    lines = listed.stdout.splitlines()
+    if len(lines) != 2 or len(lines[1].split()) < 3:
+        raise LockedRuntimeError("locked runtime image descriptor is missing")
+    descriptor_digest = lines[1].split()[2]
+    if descriptor_digest != integrity:
+        return descriptor_digest
+    content = runner(
+        (
+            "docker", "exec", "--privileged", node,
+            "ctr", "--namespace=k8s.io", "content", "get", integrity,
+        ),
+        check=True,
+        capture_output=True,
+    )
+    try:
+        descriptor = json.loads(content.stdout)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise LockedRuntimeError("locked runtime image descriptor is invalid") from exc
+    manifests = descriptor.get("manifests")
+    if manifests is None:
+        return descriptor_digest
+    os_name, architecture = platform.split("/", 1)
+    matches = [
+        item
+        for item in manifests
+        if item.get("platform", {}).get("os") == os_name
+        and item.get("platform", {}).get("architecture") == architecture
+        and not item.get("platform", {}).get("variant")
+    ]
+    if len(matches) != 1:
+        raise LockedRuntimeError("locked runtime platform descriptor is ambiguous")
+    return matches[0]["digest"]
+
+
 def materialize_assets(
     document: Mapping[str, Any],
     cache_root: str | Path,
@@ -71,6 +122,7 @@ def preload_runtime_images(
     sleeper: Callable[[float], None] = time.sleep,
     ready_checker: Callable[[str, str], bool] | None = None,
     host_seeder: Callable[[Mapping[str, Any], str, tuple[str, ...]], bool] | None = None,
+    platform_digest_resolver: Callable[[str, str, str, str], str] | None = None,
 ) -> dict[str, Any]:
     """Pull each locked runtime digest directly into every Kind node."""
 
@@ -94,6 +146,16 @@ def preload_runtime_images(
         raise LockedRuntimeError("Kind node inventory must contain one control plane")
     control_node = control_nodes[0]
     worker_nodes = tuple(node for node in nodes if node != control_node)
+    if platform_digest_resolver is None:
+        platform_digest_resolver = lambda node, source, integrity, selected_platform: (
+            resolve_node_platform_digest(
+                node,
+                source,
+                integrity,
+                selected_platform,
+                runner=runner,
+            )
+        )
     if ready_checker is None:
         def ready_checker(node: str, source: str) -> bool:
             completed = runner(
@@ -237,6 +299,13 @@ def preload_runtime_images(
                     attempts=5,
                     stdout=subprocess.DEVNULL,
                 )
+            actual_platform_digest = platform_digest_resolver(
+                control_node, source, artifact["integrity"], platform
+            )
+            if actual_platform_digest != artifact["platform_integrity"]:
+                raise LockedRuntimeError(
+                    f"locked runtime platform digest mismatch: {artifact['name']}"
+                )
             execute(
                 "tag",
                 (
@@ -280,7 +349,9 @@ def preload_runtime_images(
                 )
         finally:
             archive.unlink(missing_ok=True)
-        identities.append(f"{artifact['target']}:{artifact['integrity']}")
+        identities.append(
+            f"{artifact['target']}:{artifact['integrity']}:{artifact['platform_integrity']}"
+        )
     return {
         "schema_id": "clawgym.sregym_preloaded_images.v1",
         "image_count": len(identities),

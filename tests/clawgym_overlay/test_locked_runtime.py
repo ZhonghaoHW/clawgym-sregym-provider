@@ -73,7 +73,7 @@ def test_cluster_inventory_compares_content_digests_without_exporting_identities
     )
     status = SimpleNamespace(
         name="application",
-        image_id=declared["source"].removeprefix("oci://"),
+        image_id=f"runtime@{declared['platform_integrity']}",
     )
     pod = SimpleNamespace(
         spec=SimpleNamespace(
