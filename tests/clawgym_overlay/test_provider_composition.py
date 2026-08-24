@@ -25,7 +25,11 @@ from clawgym.providers import (
 )
 from clawgym.runtime import LifecycleController
 from clawgym_overlay.composition import register_sregym_providers
-from clawgym_overlay.providers import SREGymEnvironmentValidationAdapter, SREGymOracleProvider
+from clawgym_overlay.providers import (
+    SREGymEnvironmentValidationAdapter,
+    SREGymObservationProvider,
+    SREGymOracleProvider,
+)
 from clawgym_overlay.providers.sregym import _SREGymAccessHandle
 from clawgym_overlay.release import build_environment_release, load_release_manifests
 
@@ -284,3 +288,46 @@ def test_validation_adapter_is_no_model_and_lane_restricted() -> None:
     ]
     with pytest.raises(RuntimeError, match="environment_validation"):
         adapter.invoke(SimpleNamespace(lane="evaluation", manifest_digest="a" * 64), access)
+
+
+def test_causal_observation_provider_requires_complete_successful_transition() -> None:
+    source_summary = {
+        "status": "success",
+        "result_count": 1,
+        "summary_digest": "a" * 64,
+    }
+    windows = {
+        window: {
+            "window_started_at": NOW,
+            "window_completed_at": NOW,
+            "service_healthy": window != "fault",
+            "sources": {
+                source: dict(source_summary)
+                for source in ("prometheus", "loki", "jaeger")
+            },
+        }
+        for window in ("baseline", "fault", "mitigation", "recovery")
+    }
+    provider = SREGymObservationProvider(
+        sha256_digest({"observation": "causal"}),
+        ("prometheus", "loki", "jaeger"),
+        lambda: {
+            "capture_windows": windows,
+            "causal_transition": {
+                "baseline_healthy": True,
+                "fault_observed": True,
+                "mitigation_healthy": True,
+                "recovery_healthy": True,
+                "missing_windows": [],
+                "passed": True,
+            },
+        },
+    )
+    run = SimpleNamespace(manifest_digest="a" * 64)
+    evidence = provider.collect(run)[0].document
+    assert evidence["availability"] == "available"
+    assert evidence["causal_transition"]["passed"] is True
+
+    windows["fault"]["sources"]["loki"]["status"] = "error"
+    with pytest.raises(RuntimeError, match="failed query"):
+        provider.collect(run)

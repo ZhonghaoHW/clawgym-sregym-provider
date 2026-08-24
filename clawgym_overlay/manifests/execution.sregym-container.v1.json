@@ -4,5 +4,7 @@
   "backend": "sregym-container-runner",
   "isolation": "container",
   "timeout_seconds": 1800,
+  "deployment_cache_policy": "empty-per-formal-run",
+  "runtime_image_policy": "declared-subset-only",
   "deployment_lock_digest": "0000000000000000000000000000000000000000000000000000000000000000"
 }

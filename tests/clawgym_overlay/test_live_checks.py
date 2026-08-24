@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from clawgym_overlay.live_checks import (
+    SREGymCausalTelemetryRecorder,
     SREGymLivePhaseProbe,
     SREGymLiveTelemetrySnapshotter,
     SafeTelemetryQuery,
@@ -33,6 +34,9 @@ class FakeApps:
         status = SimpleNamespace(ready_replicas=1, unavailable_replicas=0)
         spec = SimpleNamespace(replicas=1)
         return SimpleNamespace(items=[SimpleNamespace(status=status, spec=spec)])
+
+    def list_deployment_for_all_namespaces(self):
+        return SimpleNamespace(items=[])
 
 
 class FakeNetwork:
@@ -69,6 +73,21 @@ def test_live_phase_probe_distinguishes_healthy_fault_and_cleanup() -> None:
     assert probe("cleanup")["passed"] is True
 
 
+def test_reset_proves_the_declared_steady_state_window() -> None:
+    probe, _, _ = phase_probe()
+    sleeps = []
+    probe.baseline_window_seconds = 10
+    probe.baseline_sample_interval_seconds = 5
+    probe.sleep = sleeps.append
+
+    result = probe("reset")
+
+    assert result["passed"] is True
+    assert result["baseline_window_seconds"] == 10
+    assert result["baseline_samples"] == 3
+    assert sleeps == [5, 5]
+
+
 def test_telemetry_snapshot_exports_only_count_status_and_digest() -> None:
     snapshotter = SREGymLiveTelemetrySnapshotter(
         (
@@ -98,3 +117,28 @@ def test_telemetry_query_failure_is_distinct_from_empty() -> None:
     result = snapshotter()
     assert result["prometheus"]["status"] == "error"
     assert result["loki"]["status"] == "empty"
+
+
+def test_causal_telemetry_requires_all_four_service_transitions() -> None:
+    snapshotter = SREGymLiveTelemetrySnapshotter(
+        (
+            SafeTelemetryQuery("prometheus", lambda: {"data": {"result": []}}),
+            SafeTelemetryQuery("loki", lambda: {"data": {"result": []}}),
+            SafeTelemetryQuery("jaeger", lambda: {"data": []}),
+        )
+    )
+    recorder = SREGymCausalTelemetryRecorder(
+        snapshotter,
+        clock=lambda: "2026-08-25T01:02:03Z",
+    )
+    for window, healthy in (
+        ("baseline", True),
+        ("fault", False),
+        ("mitigation", True),
+        ("recovery", True),
+    ):
+        result = recorder.capture(window, healthy)
+        assert result["queries_succeeded"] is True
+    evidence = recorder()
+    assert evidence["causal_transition"]["passed"] is True
+    assert tuple(evidence["capture_windows"]) == recorder.REQUIRED_WINDOWS

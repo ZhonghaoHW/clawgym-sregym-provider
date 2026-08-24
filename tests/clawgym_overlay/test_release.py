@@ -67,7 +67,7 @@ def test_each_environment_dimension_changes_release_identity(kind: str) -> None:
     elif kind == "tool":
         candidate[kind]["trajectory_durability"] = "candidate-host-retained-json"
     elif kind == "observation":
-        candidate[kind]["capture_window"] = "candidate-episode"
+        candidate[kind]["causal_signal"] = "candidate-signal"
     else:
         candidate[kind]["timeout_seconds"] += 1
     evolved = build_environment_release(overlay_revision="a" * 40, manifests=candidate)

@@ -275,6 +275,8 @@ class SREGymObservationProvider:
         snapshot = self.snapshotter()
         if not isinstance(snapshot, Mapping):
             raise RuntimeError("observation snapshot must be an object")
+        if "capture_windows" in snapshot:
+            return self._collect_causal(run_manifest, snapshot)
         summaries: dict[str, dict[str, Any]] = {}
         for source in self.sources:
             value = snapshot.get(source)
@@ -310,6 +312,67 @@ class SREGymObservationProvider:
             ),
         )
 
+    def _collect_causal(
+        self, run_manifest: RunManifest, snapshot: Mapping[str, Any]
+    ) -> tuple[EvidencePayload, ...]:
+        if set(snapshot) != {"capture_windows", "causal_transition"}:
+            raise RuntimeError("causal observation snapshot has invalid fields")
+        windows = snapshot["capture_windows"]
+        transition = snapshot["causal_transition"]
+        required_windows = ("baseline", "fault", "mitigation", "recovery")
+        if not isinstance(windows, Mapping) or tuple(windows) != required_windows:
+            raise RuntimeError("causal observation windows are incomplete or unordered")
+        safe_windows: dict[str, Any] = {}
+        query_error = False
+        for window in required_windows:
+            value = windows[window]
+            if not isinstance(value, Mapping) or set(value) != {
+                "window_started_at",
+                "window_completed_at",
+                "service_healthy",
+                "sources",
+            }:
+                raise RuntimeError(f"{window} observation window is invalid")
+            sources = value["sources"]
+            if not isinstance(sources, Mapping) or set(sources) != set(self.sources):
+                raise RuntimeError(f"{window} observation sources are invalid")
+            safe_sources: dict[str, Any] = {}
+            for source in self.sources:
+                summary = sources[source]
+                if not isinstance(summary, Mapping) or set(summary) != {
+                    "status",
+                    "result_count",
+                    "summary_digest",
+                }:
+                    raise RuntimeError(f"{window}/{source} summary is invalid")
+                if summary["status"] not in {"success", "empty", "error"}:
+                    raise RuntimeError(f"{window}/{source} status is invalid")
+                if summary["status"] == "error":
+                    query_error = True
+                safe_sources[source] = dict(summary)
+            safe_windows[window] = {
+                "window_started_at": value["window_started_at"],
+                "window_completed_at": value["window_completed_at"],
+                "service_healthy": value["service_healthy"] is True,
+                "sources": safe_sources,
+            }
+        if not isinstance(transition, Mapping) or transition.get("passed") is not True:
+            raise RuntimeError("causal service transition was not proven")
+        if query_error:
+            raise RuntimeError("causal telemetry contains a failed query")
+        return (
+            EvidencePayload(
+                artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-observations.json",
+                document={
+                    "schema_id": "clawgym.sregym_causal_observation_evidence.v1",
+                    "provider_id": self.provider_id,
+                    "availability": "available",
+                    "capture_windows": safe_windows,
+                    "causal_transition": dict(transition),
+                },
+            ),
+        )
+
 
 @dataclass(slots=True)
 class SREGymExecutionBackend:
@@ -335,6 +398,8 @@ class SREGymEnvironmentValidationAdapter:
     delete_policy: Callable[[str, str, str], Mapping[str, Any]]
     namespace: str = "hotel-reservation"
     policy_name: str = "deny-all-recommendation"
+    steady_state_probe: Callable[[], bool] | None = None
+    telemetry_capture: Callable[[str, bool], Mapping[str, Any]] | None = None
     clock: Callable[[], str] = _utc_now
     provider_id: str = field(default="sregym.environment-validation.v1", init=False)
     provider_type: str = field(default="agent_adapter", init=False)
@@ -351,8 +416,23 @@ class SREGymEnvironmentValidationAdapter:
             self.namespace,
             self.policy_name,
         )
+        service_healthy = (
+            bool(self.steady_state_probe()) if self.steady_state_probe is not None else True
+        )
+        telemetry = (
+            dict(self.telemetry_capture("mitigation", service_healthy))
+            if self.telemetry_capture is not None
+            else None
+        )
         duration_ms = max(0, int((time.monotonic() - start) * 1000))
-        status = "succeeded" if isinstance(result, Mapping) and result.get("deleted") is True else "failed"
+        status = (
+            "succeeded"
+            if isinstance(result, Mapping)
+            and result.get("deleted") is True
+            and service_healthy
+            and (telemetry is None or telemetry.get("queries_succeeded") is True)
+            else "failed"
+        )
         completed_at = self.clock()
         return AgentInvocationResult(
             outcome=_outcome(
@@ -367,6 +447,8 @@ class SREGymEnvironmentValidationAdapter:
                     "namespace": self.namespace,
                     "resource_name": self.policy_name,
                     "deleted": status == "succeeded",
+                    "service_healthy": service_healthy,
+                    "telemetry_window": telemetry,
                 },
             ),
             submission={"operation": "delete-network-policy", "completed": status == "succeeded"},

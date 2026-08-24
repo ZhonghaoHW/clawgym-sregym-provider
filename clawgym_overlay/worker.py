@@ -12,6 +12,7 @@ from clawgym.providers import ProviderBinding, ProviderDefinition, ProviderRegis
 from clawgym.worker import execute_worker, verify_source_checkout
 from clawgym_overlay.composition import register_sregym_providers
 from clawgym_overlay.live_checks import (
+    SREGymCausalTelemetryRecorder,
     SREGymLivePhaseProbe,
     build_kubernetes_telemetry_snapshotter,
     delete_validation_network_policy,
@@ -82,12 +83,22 @@ def execute(args: argparse.Namespace) -> None:
     manifests = load_release_manifests(manifest_root)
     adapter_profile, sink_profile = load_validation_profiles(manifest_root)
     registry = ProviderRegistry()
+    telemetry = SREGymCausalTelemetryRecorder(build_kubernetes_telemetry_snapshotter(conductor))
     register_sregym_providers(
         registry,
         conductor=conductor,
         manifests=manifests,
-        snapshotter=build_kubernetes_telemetry_snapshotter(conductor),
-        phase_probe=SREGymLivePhaseProbe(conductor),
+        snapshotter=telemetry,
+        phase_probe=SREGymLivePhaseProbe(
+            conductor,
+            telemetry_capture=telemetry.capture,
+            baseline_window_seconds=manifests["fault"]["steady_state"][
+                "baseline_window_seconds"
+            ],
+            max_experiment_duration_seconds=manifests["fault"][
+                "max_experiment_duration_seconds"
+            ],
+        ),
         access_verifier=verify_filtered_kubernetes_access,
     )
     adapter = SREGymEnvironmentValidationAdapter(
@@ -95,6 +106,10 @@ def execute(args: argparse.Namespace) -> None:
         delete_validation_network_policy,
         namespace=adapter_profile["namespace"],
         policy_name=adapter_profile["resource_name"],
+        steady_state_probe=lambda: bool(
+            conductor.current_problem.mitigation_oracle._run_recommendation_probe()
+        ),
+        telemetry_capture=telemetry.capture,
     )
     registry.register_binding(_binding(adapter))
     run_id = run_document.get("run_id")

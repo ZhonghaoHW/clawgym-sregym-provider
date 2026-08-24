@@ -4,5 +4,23 @@
   "problem_id": "network_policy_block",
   "mechanism": "kubernetes-network-policy-deny-all",
   "target_component": "recommendation",
-  "seed_behavior": "deterministic-no-random-input"
+  "seed_behavior": "deterministic-no-random-input",
+  "steady_state": {
+    "signal": "recommendation-health-probe",
+    "baseline_window_seconds": 30,
+    "minimum_success_ratio": "1.0"
+  },
+  "max_experiment_duration_seconds": 600,
+  "abort_conditions": [
+    "kind-node-not-ready",
+    "non-target-namespace-impact",
+    "telemetry-unavailable"
+  ],
+  "rollback_order": [
+    "recover-fault",
+    "revoke-tool-access",
+    "cleanup-application",
+    "verify-cluster-ready"
+  ],
+  "cleanup_failure_policy": "halt-and-require-operator"
 }

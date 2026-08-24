@@ -58,6 +58,11 @@ _SCHEMAS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 "mechanism",
                 "target_component",
                 "seed_behavior",
+                "steady_state",
+                "max_experiment_duration_seconds",
+                "abort_conditions",
+                "rollback_order",
+                "cleanup_failure_policy",
             }
         ),
     ),
@@ -88,7 +93,15 @@ _SCHEMAS: Final[dict[str, tuple[str, frozenset[str]]]] = {
     ),
     "observation": (
         "clawgym.sregym_observation_profile.v1",
-        frozenset({"schema_id", "observation_profile_id", "sources", "capture_window"}),
+        frozenset(
+            {
+                "schema_id",
+                "observation_profile_id",
+                "sources",
+                "capture_windows",
+                "causal_signal",
+            }
+        ),
     ),
     "execution": (
         "clawgym.sregym_execution_profile.v1",
@@ -99,6 +112,8 @@ _SCHEMAS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 "backend",
                 "isolation",
                 "timeout_seconds",
+                "deployment_cache_policy",
+                "runtime_image_policy",
                 "deployment_lock_digest",
             }
         ),
@@ -162,6 +177,41 @@ def _validate_manifest(kind: str, document: Mapping[str, Any]) -> None:
     elif kind == "fault":
         for field in ("fault_id", "problem_id", "mechanism", "target_component", "seed_behavior"):
             _string(document[field], field)
+        steady = document["steady_state"]
+        if not isinstance(steady, Mapping) or set(steady) != {
+            "signal",
+            "baseline_window_seconds",
+            "minimum_success_ratio",
+        }:
+            raise ContractValidationError("steady_state has invalid fields")
+        _string(steady["signal"], "steady_state.signal")
+        baseline_window = steady["baseline_window_seconds"]
+        if (
+            isinstance(baseline_window, bool)
+            or not isinstance(baseline_window, int)
+            or baseline_window <= 0
+        ):
+            raise ContractValidationError("baseline_window_seconds must be positive")
+        if steady["minimum_success_ratio"] != "1.0":
+            raise ContractValidationError("WP4 requires a complete steady-state baseline")
+        duration = document["max_experiment_duration_seconds"]
+        if isinstance(duration, bool) or not isinstance(duration, int) or duration <= baseline_window:
+            raise ContractValidationError("max experiment duration must exceed baseline window")
+        if document["abort_conditions"] != [
+            "kind-node-not-ready",
+            "non-target-namespace-impact",
+            "telemetry-unavailable",
+        ]:
+            raise ContractValidationError("fault abort conditions are not the reviewed WP4 set")
+        if document["rollback_order"] != [
+            "recover-fault",
+            "revoke-tool-access",
+            "cleanup-application",
+            "verify-cluster-ready",
+        ]:
+            raise ContractValidationError("fault rollback order is invalid")
+        if document["cleanup_failure_policy"] != "halt-and-require-operator":
+            raise ContractValidationError("cleanup failure must require an operator")
     elif kind == "oracle":
         _string(document["oracle_id"], "oracle_id")
         _string(document["problem_id"], "problem_id")
@@ -177,7 +227,9 @@ def _validate_manifest(kind: str, document: Mapping[str, Any]) -> None:
     elif kind == "observation":
         _string(document["observation_profile_id"], "observation_profile_id")
         _string_list(document["sources"], "sources")
-        _string(document["capture_window"], "capture_window")
+        if document["capture_windows"] != ["baseline", "fault", "mitigation", "recovery"]:
+            raise ContractValidationError("observation capture windows are invalid")
+        _string(document["causal_signal"], "causal_signal")
     elif kind == "execution":
         _string(document["execution_profile_id"], "execution_profile_id")
         _string(document["backend"], "backend")
@@ -185,6 +237,10 @@ def _validate_manifest(kind: str, document: Mapping[str, Any]) -> None:
         timeout = document["timeout_seconds"]
         if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
             raise ContractValidationError("timeout_seconds must be a positive integer")
+        if document["deployment_cache_policy"] != "empty-per-formal-run":
+            raise ContractValidationError("formal deployment requires an empty cache")
+        if document["runtime_image_policy"] != "declared-subset-only":
+            raise ContractValidationError("runtime images must be a declared subset")
         if not re.fullmatch(r"[0-9a-f]{64}", _string(document["deployment_lock_digest"], "deployment_lock_digest")):
             raise ContractValidationError("deployment_lock_digest must be a SHA-256 digest")
 
