@@ -70,6 +70,7 @@ def preload_runtime_images(
     nodes: tuple[str, ...] | None = None,
     sleeper: Callable[[float], None] = time.sleep,
     ready_checker: Callable[[str, str], bool] | None = None,
+    host_seeder: Callable[[Mapping[str, Any], str, tuple[str, ...]], bool] | None = None,
 ) -> dict[str, Any]:
     """Pull each locked runtime digest directly into every Kind node."""
 
@@ -120,11 +121,74 @@ def preload_runtime_images(
             result = f"{result}:latest"
         return result
 
+    if host_seeder is None:
+        def host_seeder(
+            artifact: Mapping[str, Any],
+            source: str,
+            node_names: tuple[str, ...],
+        ) -> bool:
+            target = artifact["target"]
+            descriptor = subprocess.run(
+                ("docker", "image", "inspect", "--format={{.Descriptor.digest}}", target),
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if descriptor.returncode != 0 or descriptor.stdout.strip() != artifact["integrity"]:
+                return False
+            archive_descriptor, archive_name = tempfile.mkstemp(
+                prefix="clawgym-host-image-", suffix=".tar"
+            )
+            os.close(archive_descriptor)
+            archive = Path(archive_name)
+            try:
+                saved = subprocess.run(
+                    (
+                        "docker", "image", "save", "--platform", platform,
+                        "--output", str(archive), target,
+                    ),
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                if saved.returncode != 0:
+                    return False
+                loaded = subprocess.run(
+                    (
+                        "kind", "load", "image-archive", "--name", cluster_name,
+                        str(archive),
+                    ),
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                if loaded.returncode != 0:
+                    return False
+                normalized_target = canonical_target(target)
+                for node in node_names:
+                    tagged = subprocess.run(
+                        (
+                            "docker", "exec", "--privileged", node,
+                            "ctr", "--namespace=k8s.io", "images", "tag",
+                            "--force", normalized_target, source,
+                        ),
+                        check=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    if tagged.returncode != 0:
+                        return False
+                return True
+            finally:
+                archive.unlink(missing_ok=True)
+
     for artifact in sorted(document["artifacts"], key=lambda item: item["name"]):
         if not artifact["name"].startswith("runtime-image."):
             continue
         source = artifact["source"].removeprefix("oci://")
         target = canonical_target(artifact["target"])
+        if not ready_checker(control_node, source):
+            host_seeder(artifact, source, nodes)
         descriptor, archive_name = tempfile.mkstemp(prefix="clawgym-node-image-", suffix=".tar")
         os.close(descriptor)
         archive = Path(archive_name)

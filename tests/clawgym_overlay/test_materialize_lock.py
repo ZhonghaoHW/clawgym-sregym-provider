@@ -57,6 +57,7 @@ def test_preload_images_uses_only_locked_sources_and_declared_targets() -> None:
         runner=lambda command, **kwargs: calls.append((command, kwargs)),
         nodes=("formal-control-plane", "formal-worker"),
         ready_checker=lambda node, source: False,
+        host_seeder=lambda artifact, source, nodes: False,
     )
 
     images = [item for item in document["artifacts"] if item["name"].startswith("runtime-image.")]
@@ -93,6 +94,7 @@ def test_preload_failure_identifies_only_locked_artifact_and_stage() -> None:
             runner=fail_load,
             nodes=("formal-control-plane",),
             ready_checker=lambda node, source: False,
+            host_seeder=lambda artifact, source, nodes: False,
         )
 
 
@@ -115,6 +117,7 @@ def test_preload_retries_transient_control_plane_pull() -> None:
         nodes=("formal-control-plane",),
         sleeper=sleeps.append,
         ready_checker=lambda node, source: False,
+        host_seeder=lambda artifact, source, nodes: False,
     )
 
     assert attempts >= 3
@@ -131,7 +134,29 @@ def test_preload_reuses_complete_control_plane_content_without_registry_pull() -
         runner=lambda command, **kwargs: calls.append(command),
         nodes=("formal-control-plane",),
         ready_checker=lambda node, source: True,
+        host_seeder=lambda artifact, source, nodes: False,
     )
 
     assert not any(command[7:8] == ("pull",) for command in calls)
     assert any(command[7:8] == ("export",) for command in calls)
+
+
+def test_preload_can_seed_only_verified_host_content_before_pull() -> None:
+    document = lock_fixture()
+    seeded = []
+
+    def seed(artifact, source, nodes):
+        seeded.append((artifact["integrity"], source, nodes))
+        return True
+
+    preload_runtime_images(
+        document,
+        "clawgym-formal",
+        runner=lambda command, **kwargs: None,
+        nodes=("formal-control-plane",),
+        ready_checker=lambda node, source: bool(seeded),
+        host_seeder=seed,
+    )
+
+    assert seeded
+    assert all(item[0].startswith("sha256:") for item in seeded)

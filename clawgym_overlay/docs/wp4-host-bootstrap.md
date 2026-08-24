@@ -65,6 +65,12 @@ once, exports that single-platform content, and streams it into the worker
 nodes before adding the manifest's declared runtime tag. This also avoids
 fourfold registry requests. Mutable image resolution remains forbidden.
 
+If the host already has an image whose descriptor exactly equals the locked
+digest, the preloader may export that verified `linux/amd64` content to seed
+all nodes before contacting a registry. An absent, mismatched, or
+non-exportable host entry is ignored; it can never substitute a tag match for
+the locked digest.
+
 ## GitHub App source access
 
 The worker obtains source only through the explicitly installed read-only
