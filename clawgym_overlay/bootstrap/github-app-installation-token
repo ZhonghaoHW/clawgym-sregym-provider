@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# Emit a short-lived GitHub App installation token for the controlled worker.
+#
+# This file is installed root-owned and is never directly sudo-authorized for
+# ecs-user.  The only caller is github-app-git-credential, which restricts the
+# Git credential request to the two reviewed repositories.
+
+set -euo pipefail
+
+if [ "$(id -u)" -ne 0 ]; then
+  printf '%s\n' 'github_app_token_error=root_required' >&2
+  exit 1
+fi
+
+readonly app_id='4703709'
+readonly installation_id='156235425'
+readonly key_path='/etc/clawgym/github-app.pem'
+readonly cache_dir='/run/clawgym'
+readonly cache_path="${cache_dir}/github-app-installation-token.json"
+
+if [ "$#" -ne 0 ] || [ ! -f "$key_path" ]; then
+  printf '%s\n' 'github_app_token_error=invalid_invocation_or_key_missing' >&2
+  exit 1
+fi
+
+install -d -o root -g root -m 0700 "$cache_dir"
+
+emit_cached_token() {
+  python3 - "$cache_path" <<'PY'
+import datetime as dt
+import json
+import os
+import stat
+import sys
+import time
+
+path = sys.argv[1]
+try:
+    details = os.stat(path)
+    if details.st_uid != 0 or stat.S_IMODE(details.st_mode) != 0o600:
+        raise ValueError("unsafe cache permissions")
+    with open(path, encoding="utf-8") as cache_file:
+        cached = json.load(cache_file)
+    token = cached["token"]
+    expires_at = dt.datetime.fromisoformat(cached["expires_at"].replace("Z", "+00:00"))
+    if not isinstance(token, str) or not token or expires_at.timestamp() <= time.time() + 120:
+        raise ValueError("missing or expiring token")
+except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+    sys.exit(1)
+
+print(token)
+PY
+}
+
+if emit_cached_token; then
+  exit 0
+fi
+
+base64url() {
+  openssl base64 -A | tr '+/' '-_' | tr -d '='
+}
+
+issued_at="$(date -u +%s)"
+header='{"alg":"RS256","typ":"JWT"}'
+payload="{\"iat\":$((issued_at - 60)),\"exp\":$((issued_at + 540)),\"iss\":\"${app_id}\"}"
+signed_input="$(printf '%s' "$header" | base64url).$(printf '%s' "$payload" | base64url)"
+signature="$(printf '%s' "$signed_input" | openssl dgst -sha256 -sign "$key_path" | base64url)"
+jwt="${signed_input}.${signature}"
+
+response="$(curl --fail --silent --show-error --request POST \
+  --url "https://api.github.com/app/installations/${installation_id}/access_tokens" \
+  --header 'Accept: application/vnd.github+json' \
+  --header "Authorization: Bearer ${jwt}" \
+  --header 'X-GitHub-Api-Version: 2026-03-10')"
+
+python3 - "$cache_path" 3<<<"$response" <<'PY'
+import datetime as dt
+import json
+import os
+import stat
+import sys
+import tempfile
+
+cache_path = sys.argv[1]
+try:
+    response = json.load(os.fdopen(3, encoding="utf-8"))
+    token = response["token"]
+    expires_at = response["expires_at"]
+    expires = dt.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+    if not isinstance(token, str) or not token or expires <= dt.datetime.now(dt.timezone.utc):
+        raise ValueError("invalid installation token response")
+except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+    raise SystemExit("github_app_token_error=invalid_installation_response") from error
+
+directory = os.path.dirname(cache_path)
+fd, temporary_path = tempfile.mkstemp(prefix=".github-token-", dir=directory)
+try:
+    os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR)
+    with os.fdopen(fd, "w", encoding="utf-8") as temporary_file:
+        json.dump({"token": token, "expires_at": expires_at}, temporary_file, separators=(",", ":"))
+        temporary_file.flush()
+        os.fsync(temporary_file.fileno())
+    os.replace(temporary_path, cache_path)
+finally:
+    if os.path.exists(temporary_path):
+        os.unlink(temporary_path)
+
+print(token)
+PY

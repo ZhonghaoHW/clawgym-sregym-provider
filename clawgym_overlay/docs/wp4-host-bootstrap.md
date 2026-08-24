@@ -54,3 +54,38 @@ under `/home/ecs-user/.local/bin`. It has no sudo authority.
 `bootstrap/staging-kind-config.yaml` is only the temporary four-node staging
 cluster topology. The formal cluster is created later from the published
 deployment lock, never from this staging file.
+
+## GitHub App source access
+
+The worker obtains source only through the explicitly installed read-only
+GitHub App. Its long-lived private key is an administrator-installed
+`root:root` `0600` file at `/etc/clawgym/github-app.pem`; it is not part of a
+checkout, a release, an artifact, or the `ecs-user` account. A root-owned token
+helper signs a GitHub App JWT and caches the resulting installation token only
+under `/run/clawgym` with `0600` permissions. GitHub installation tokens expire
+after one hour; the cache is therefore transient and is removed on reboot.
+
+Install the two reviewed helper scripts and updated sudoers file as root from
+an approved provider commit:
+
+```bash
+install -o root -g root -m 0750 github-app-installation-token \
+  /usr/local/lib/clawgym/github-app-installation-token
+install -o root -g root -m 0750 github-app-git-credential \
+  /usr/local/lib/clawgym/github-app-git-credential
+install -o root -g root -m 0440 ecs-user-wp4.sudoers \
+  /etc/sudoers.d/clawgym-wp4
+visudo -cf /etc/sudoers.d/clawgym-wp4
+```
+
+`ecs-user` configures Git only once, with no credential store:
+
+```bash
+git config --global credential.useHttpPath true
+git config --global credential.helper '!/usr/local/lib/clawgym/github-app-git-credential'
+```
+
+The credential helper responds only for the two explicitly approved GitHub
+HTTPS paths. It does not accept arguments that could select another app,
+installation, key, host, or repository. The installation-token command itself
+is deliberately not sudo-authorized for `ecs-user`.
