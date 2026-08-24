@@ -30,3 +30,10 @@ def test_sudoers_never_grants_token_minting_directly() -> None:
 
     assert "github-app-git-credential" in sudoers
     assert "github-app-installation-token" not in sudoers
+
+
+def test_documentation_keeps_the_key_root_only_but_runs_the_helper_as_ecs_user() -> None:
+    documentation = (ROOT / "clawgym_overlay" / "docs" / "wp4-host-bootstrap.md").read_text()
+
+    assert "-m 0750 github-app-installation-token" in documentation
+    assert "-m 0755 github-app-git-credential" in documentation

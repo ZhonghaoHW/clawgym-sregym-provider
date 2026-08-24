@@ -71,7 +71,7 @@ an approved provider commit:
 ```bash
 install -o root -g root -m 0750 github-app-installation-token \
   /usr/local/lib/clawgym/github-app-installation-token
-install -o root -g root -m 0750 github-app-git-credential \
+install -o root -g root -m 0755 github-app-git-credential \
   /usr/local/lib/clawgym/github-app-git-credential
 install -o root -g root -m 0440 ecs-user-wp4.sudoers \
   /etc/sudoers.d/clawgym-wp4
