@@ -28,6 +28,10 @@ still see `waiting_for_agent=True` and accept the deterministic validation
 submission. The legacy `start_problem()` path continues to use the same
 private injection primitive and retains its behavior.
 
+The Kubernetes filtering proxy applies its existing hidden-label policy to
+namespaced collection responses as well as cluster-wide collections. This
+closes the workload-disclosure gap without broadening the agent's authority.
+
 For `network_policy_block`, an absent NetworkPolicy is successful idempotent
 recovery, while non-404 Kubernetes errors propagate to the host instead of
 being hidden by the generic recovery decorator. Focused tests execute the

@@ -43,6 +43,45 @@ HIDDEN_LABELS: dict[str, set[str]] = {
     "opentelemetry.io/name": {"load-generator"},
 }
 
+_FILTERED_LIST_RESOURCES = {
+    "configmaps",
+    "cronjobs",
+    "daemonsets",
+    "deployments",
+    "endpoints",
+    "events",
+    "jobs",
+    "persistentvolumeclaims",
+    "pods",
+    "replicasets",
+    "secrets",
+    "services",
+    "statefulsets",
+}
+
+
+def _response_filter_type(path: str) -> str | None:
+    """Classify only Kubernetes collection responses that require filtering."""
+
+    clean_path = urlparse(path).path.rstrip("/")
+    if clean_path == "/api/v1/namespaces":
+        return "namespaces"
+
+    parts = clean_path.strip("/").split("/")
+    if "namespaces" in parts:
+        namespace_index = parts.index("namespaces")
+        resource_index = namespace_index + 2
+        if (
+            len(parts) == resource_index + 1
+            and parts[resource_index] in _FILTERED_LIST_RESOURCES
+        ):
+            return "resources"
+        return None
+
+    if parts and parts[-1] in _FILTERED_LIST_RESOURCES:
+        return "resources"
+    return None
+
 # Disable SSL warnings for self-signed certs
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -267,34 +306,7 @@ class KubernetesAPIProxy:
                 Determine if response should be filtered and return filter type.
                 Returns: 'namespaces', 'resources', or None
                 """
-                # Namespace list: /api/v1/namespaces
-                if path.rstrip("/") == "/api/v1/namespaces" or path.startswith("/api/v1/namespaces?"):
-                    return "namespaces"
-
-                # Cluster-wide resource listings (not namespaced)
-                # e.g., /api/v1/pods, /api/v1/events, /apis/apps/v1/deployments
-                if "/namespaces/" not in path:
-                    # Check if this is a list of namespaced resources
-                    resource_patterns = [
-                        "/api/v1/pods",
-                        "/api/v1/services",
-                        "/api/v1/events",
-                        "/api/v1/configmaps",
-                        "/api/v1/secrets",
-                        "/api/v1/endpoints",
-                        "/api/v1/persistentvolumeclaims",
-                        "/apis/apps/v1/deployments",
-                        "/apis/apps/v1/replicasets",
-                        "/apis/apps/v1/statefulsets",
-                        "/apis/apps/v1/daemonsets",
-                        "/apis/batch/v1/jobs",
-                        "/apis/batch/v1/cronjobs",
-                    ]
-                    for pattern in resource_patterns:
-                        if path.startswith(pattern):
-                            return "resources"
-
-                return None
+                return _response_filter_type(path)
 
             def _proxy_request(self, method: str):
                 """Proxy request to upstream API and filter response."""

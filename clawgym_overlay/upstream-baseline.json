@@ -94,6 +94,14 @@
         "tests/clawgym_overlay/test_wp4_core_patches.py"
       ],
       "sha256": "f4788bfb5279658444a7ce0a8dcef73330b4beb7a41a6b7ea8f6992ce48e3338"
+    },
+    {
+      "path": "sregym/service/k8s_proxy.py",
+      "rationale": "clawgym_overlay/docs/core-patches/0002-locked-live-slice.md",
+      "tests": [
+        "tests/clawgym_overlay/test_k8s_proxy_filtering.py"
+      ],
+      "sha256": "45448198dfde28ad7ba4640572cdff95bb2d86d6d021d3222ab94565fbffd681"
     }
   ]
 }
