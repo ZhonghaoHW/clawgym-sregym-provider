@@ -13,6 +13,7 @@ def test_git_credential_helper_is_narrowly_scoped() -> None:
     assert "store|erase" in helper
     assert "github-app-installation-token" in helper
     assert "github-app.pem" not in helper
+    assert "github_app_credential_error=root_required" in helper
 
 
 def test_token_helper_keeps_the_key_and_cache_root_only() -> None:
@@ -36,4 +37,5 @@ def test_documentation_keeps_the_key_root_only_but_runs_the_helper_as_ecs_user()
     documentation = (ROOT / "clawgym_overlay" / "docs" / "wp4-host-bootstrap.md").read_text()
 
     assert "-m 0750 github-app-installation-token" in documentation
-    assert "-m 0755 github-app-git-credential" in documentation
+    assert "-m 0750 github-app-git-credential" in documentation
+    assert "!sudo -n /usr/local/lib/clawgym/github-app-git-credential" in documentation

@@ -71,7 +71,7 @@ an approved provider commit:
 ```bash
 install -o root -g root -m 0750 github-app-installation-token \
   /usr/local/lib/clawgym/github-app-installation-token
-install -o root -g root -m 0755 github-app-git-credential \
+install -o root -g root -m 0750 github-app-git-credential \
   /usr/local/lib/clawgym/github-app-git-credential
 install -o root -g root -m 0440 ecs-user-wp4.sudoers \
   /etc/sudoers.d/clawgym-wp4
@@ -82,10 +82,11 @@ visudo -cf /etc/sudoers.d/clawgym-wp4
 
 ```bash
 git config --global credential.useHttpPath true
-git config --global credential.helper '!/usr/local/lib/clawgym/github-app-git-credential'
+git config --global credential.helper '!sudo -n /usr/local/lib/clawgym/github-app-git-credential'
 ```
 
 The credential helper responds only for the two explicitly approved GitHub
 HTTPS paths. It does not accept arguments that could select another app,
-installation, key, host, or repository. The installation-token command itself
-is deliberately not sudo-authorized for `ecs-user`.
+installation, key, host, or repository. The Git helper runs only through its
+single exact sudoers entry; the installation-token command itself is not
+sudo-authorized for `ecs-user`.
