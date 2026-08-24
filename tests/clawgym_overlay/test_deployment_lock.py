@@ -127,6 +127,16 @@ def test_committed_wp4_lock_is_valid_and_bound_by_execution_profile() -> None:
 
     assert len(document["artifacts"]) == 50
     assert profile["deployment_lock_digest"] == deployment_lock_digest(document)
+    exporter = next(
+        item
+        for item in document["artifacts"]
+        if item["name"] == "runtime-image.infrastructure.openebs-exporter"
+    )
+    assert exporter["source"] == (
+        "oci://quay.io/openebs/node-disk-exporter@"
+        "sha256:873d8bedbceac4d5cc7b01f1a0935ee9e1ddeeb25e7337fdc695fe774a3a952a"
+    )
+    assert exporter["integrity"] == exporter["source"].rsplit("@", 1)[1]
 
 
 def test_formal_kind_topology_is_content_addressed_by_execution_profile() -> None:
