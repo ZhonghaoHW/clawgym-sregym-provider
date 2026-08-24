@@ -156,6 +156,8 @@ def test_causal_telemetry_requires_all_four_service_transitions() -> None:
     ):
         result = recorder.capture(window, healthy)
         assert result["queries_succeeded"] is True
+        assert set(result["sources"]) == {"prometheus", "loki", "jaeger"}
+        assert "raw" not in str(result)
     evidence = recorder()
     assert evidence["causal_transition"]["passed"] is True
     assert tuple(evidence["capture_windows"]) == recorder.REQUIRED_WINDOWS

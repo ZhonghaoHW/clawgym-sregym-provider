@@ -268,6 +268,7 @@ class SREGymCausalTelemetryRecorder:
             "window": window,
             "queries_succeeded": queries_succeeded,
             "service_healthy": bool(service_healthy),
+            "sources": sources,
         }
 
     def __call__(self) -> Mapping[str, Any]:
