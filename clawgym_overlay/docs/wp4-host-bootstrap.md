@@ -46,3 +46,7 @@ before running Docker. The later formal deployment lock will record exact
 Docker packages, tool binaries, images, manifests, and charts; this bootstrap
 is deliberately only the prerequisite stage and is never formal episode
 evidence.
+
+The separate `bootstrap/stage-user-tools.sh` runs as `ecs-user` and verifies
+the fixed staging Kind, kubectl, Helm, and uv downloads before installing them
+under `/home/ecs-user/.local/bin`. It has no sudo authority.
