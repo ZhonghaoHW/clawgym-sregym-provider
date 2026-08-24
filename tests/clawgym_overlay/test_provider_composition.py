@@ -248,7 +248,10 @@ def test_failed_phase_postcondition_fails_receipt() -> None:
         conductor=conductor,
         manifests=manifests,
         snapshotter=lambda: {},
-        phase_probe=lambda phase: {"passed": phase != "fault"},
+        phase_probe=lambda phase: {
+            "passed": phase != "fault",
+            "diagnostic": "safe-fault-state",
+        },
     )
     environment = next(
         binding.implementation
@@ -256,7 +259,14 @@ def test_failed_phase_postcondition_fails_receipt() -> None:
         if binding.definition.provider_type == "environment_provider"
     )
     run = SimpleNamespace(manifest_digest="a" * 64)
-    assert environment.inject_fault(run).status == "failed"
+    outcome = environment.inject_fault(run)
+    assert outcome.status == "failed"
+    postconditions = outcome.evidence[0].document["summary"]["postconditions"]
+    assert postconditions == {
+        "passed": False,
+        "diagnostic": "safe-fault-state",
+        "reason": "postcondition_failed",
+    }
 
 
 def test_validation_adapter_is_no_model_and_lane_restricted() -> None:

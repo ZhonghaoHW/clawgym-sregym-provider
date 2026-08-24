@@ -106,7 +106,11 @@ class SREGymEnvironmentProvider:
         started_at = self.clock()
         result = operation()
         probe = self.phase_probe(phase) if self.phase_probe is not None else {"passed": True}
-        if not isinstance(probe, Mapping) or probe.get("passed") is not True:
+        if isinstance(probe, Mapping):
+            probe = dict(probe)
+            if probe.get("passed") is not True:
+                probe.setdefault("reason", "postcondition_failed")
+        else:
             probe = {"passed": False, "reason": "postcondition_failed"}
         completed_at = self.clock()
         status_value = str(result.get("status", "")) if isinstance(result, Mapping) else str(result)
