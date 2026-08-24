@@ -8,7 +8,6 @@ import json
 import os
 import re
 import subprocess
-import tempfile
 import urllib.request
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -66,45 +65,62 @@ def preload_runtime_images(
     cluster_name: str,
     *,
     runner: Callable[..., Any] = subprocess.run,
+    nodes: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    """Pull each locked runtime digest, tag its declared workload name, and load Kind."""
+    """Pull each locked runtime digest directly into every Kind node."""
 
     validate_deployment_lock(document)
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", cluster_name):
         raise LockedRuntimeError("Kind cluster name is invalid")
     identities: list[str] = []
     platform = document["platform"].replace("-", "/", 1)
+    if nodes is None:
+        completed = runner(
+            ("kind", "get", "nodes", "--name", cluster_name),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        nodes = tuple(line for line in completed.stdout.splitlines() if line)
+    if not nodes or len(nodes) != len(set(nodes)):
+        raise LockedRuntimeError("Kind node inventory is empty or duplicated")
+
+    def canonical_target(reference: str) -> str:
+        head = reference.split("/", maxsplit=1)[0]
+        if "/" not in reference:
+            result = f"docker.io/library/{reference}"
+        elif "." not in head and ":" not in head and head != "localhost":
+            result = f"docker.io/{reference}"
+        else:
+            result = reference
+        tail = result.rsplit("/", maxsplit=1)[-1]
+        if ":" not in tail and "@" not in tail:
+            result = f"{result}:latest"
+        return result
+
     for artifact in sorted(document["artifacts"], key=lambda item: item["name"]):
         if not artifact["name"].startswith("runtime-image."):
             continue
         source = artifact["source"].removeprefix("oci://")
-        target = artifact["target"]
-        descriptor, archive_name = tempfile.mkstemp(prefix="clawgym-image-", suffix=".tar")
-        os.close(descriptor)
-        archive = Path(archive_name)
-        archive.unlink()
-        try:
+        target = canonical_target(artifact["target"])
+        for node in nodes:
             commands = (
-                ("pull", ("docker", "pull", "--platform", platform, source)),
-                ("tag", ("docker", "tag", source, target)),
-                ("export", (
-                    "docker",
-                    "image",
-                    "save",
-                    "--platform",
-                    platform,
-                    "--output",
-                    str(archive),
-                    target,
-                )),
-                ("load", (
-                    "kind",
-                    "load",
-                    "image-archive",
-                    "--name",
-                    cluster_name,
-                    str(archive),
-                )),
+                (
+                    "pull",
+                    (
+                        "docker", "exec", "--privileged", node,
+                        "ctr", "--namespace=k8s.io", "images", "pull",
+                        "--platform", platform, source,
+                    ),
+                ),
+                (
+                    "tag",
+                    (
+                        "docker", "exec", "--privileged", node,
+                        "ctr", "--namespace=k8s.io", "images", "tag",
+                        "--force", source, target,
+                    ),
+                ),
             )
             for stage, command in commands:
                 try:
@@ -118,9 +134,7 @@ def preload_runtime_images(
                     raise LockedRuntimeError(
                         f"failed to {stage} locked runtime image: {artifact['name']}"
                     ) from exc
-        finally:
-            archive.unlink(missing_ok=True)
-        identities.append(f"{target}:{artifact['integrity']}")
+        identities.append(f"{artifact['target']}:{artifact['integrity']}")
     return {
         "schema_id": "clawgym.sregym_preloaded_images.v1",
         "image_count": len(identities),
