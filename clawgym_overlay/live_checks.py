@@ -341,29 +341,39 @@ def build_kubernetes_telemetry_snapshotter(conductor: Any) -> SREGymLiveTelemetr
 
     core = conductor.kubectl.core_v1_api
 
-    def service_query(name: str, path: str):
-        return lambda: core.connect_get_namespaced_service_proxy_with_path(
-            name=name,
-            namespace="observe",
-            path=path,
+    def service_query(name: str, path: str, query_params: tuple[tuple[str, str], ...]):
+        return lambda: core.api_client.call_api(
+            "/api/v1/namespaces/{namespace}/services/{name}/proxy/{path}",
+            "GET",
+            {"name": name, "namespace": "observe", "path": path},
+            list(query_params),
+            {"Accept": "*/*"},
+            response_type="str",
+            auth_settings=["BearerToken"],
+            _return_http_data_only=True,
         )
 
     return SREGymLiveTelemetrySnapshotter(
         (
             SafeTelemetryQuery(
                 "prometheus",
-                service_query("prometheus-server:80", "api/v1/query?query=up"),
+                service_query("prometheus-server:80", "api/v1/query", (("query", "up"),)),
             ),
             SafeTelemetryQuery(
                 "loki",
                 service_query(
                     "loki-gateway:80",
-                    "loki/api/v1/query?query=%7Bnamespace%3D%22hotel-reservation%22%7D",
+                    "loki/api/v1/query",
+                    (("query", '{namespace="hotel-reservation"}'),),
                 ),
             ),
             SafeTelemetryQuery(
                 "jaeger",
-                service_query("jaeger-out:16686", "api/traces?service=frontend&limit=20"),
+                service_query(
+                    "jaeger-out:16686",
+                    "api/traces",
+                    (("service", "frontend"), ("limit", "20")),
+                ),
             ),
         )
     )

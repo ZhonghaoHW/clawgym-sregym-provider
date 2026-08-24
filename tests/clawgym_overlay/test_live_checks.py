@@ -7,6 +7,7 @@ from clawgym_overlay.live_checks import (
     SREGymLivePhaseProbe,
     SREGymLiveTelemetrySnapshotter,
     SafeTelemetryQuery,
+    build_kubernetes_telemetry_snapshotter,
 )
 
 
@@ -161,3 +162,27 @@ def test_causal_telemetry_requires_all_four_service_transitions() -> None:
     evidence = recorder()
     assert evidence["causal_transition"]["passed"] is True
     assert tuple(evidence["capture_windows"]) == recorder.REQUIRED_WINDOWS
+
+
+def test_kubernetes_telemetry_uses_query_params_not_encoded_proxy_paths() -> None:
+    calls = []
+
+    class ApiClient:
+        def call_api(self, resource_path, method, path_params, query_params, headers, **kwargs):
+            calls.append((resource_path, method, path_params, query_params, headers, kwargs))
+            if path_params["path"] == "api/traces":
+                return '{"data":[{"traceID":"not-exported"}]}'
+            return '{"data":{"result":[{"value":"not-exported"}]}}'
+
+    core = SimpleNamespace(api_client=ApiClient())
+    conductor = SimpleNamespace(kubectl=SimpleNamespace(core_v1_api=core))
+
+    result = build_kubernetes_telemetry_snapshotter(conductor)()
+
+    assert all(item["status"] == "success" for item in result.values())
+    assert "not-exported" not in str(result)
+    assert len(calls) == 3
+    assert all("?" not in call[0] and "?" not in call[2]["path"] for call in calls)
+    assert calls[0][3] == [("query", "up")]
+    assert calls[1][3] == [("query", '{namespace="hotel-reservation"}')]
+    assert calls[2][3] == [("service", "frontend"), ("limit", "20")]
