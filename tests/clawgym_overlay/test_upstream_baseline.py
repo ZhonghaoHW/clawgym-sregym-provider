@@ -106,6 +106,7 @@ class UpstreamBaselineTest(unittest.TestCase):
             self.assertTrue(record["tests"])
             content = (ROOT / record["path"]).read_bytes()
             self.assertEqual(hashlib.sha256(content).hexdigest(), record["sha256"])
+            self.assertTrue((ROOT / record["rationale"]).is_file(), record["rationale"])
             for test_path in record["tests"]:
                 self.assertTrue((ROOT / test_path).is_file(), test_path)
 

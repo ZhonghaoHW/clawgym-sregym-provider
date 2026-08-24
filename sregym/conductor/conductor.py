@@ -38,6 +38,8 @@ class ConductorConfig:
 
     deploy_loki: bool = True
     enable_noise: bool = False
+    defer_cleanup: bool = False
+    task_stages: tuple[str, ...] | None = None
 
 
 class Conductor:
@@ -87,6 +89,10 @@ class Conductor:
         self.waiting_for_agent: bool = False
         self._evaluating: bool = False  # True while a submission is being evaluated
         self.fault_injected: bool = False
+        self._fault_recovered: bool = False
+        self._application_cleaned: bool = False
+        self._cluster_reconciled: bool = False
+        self._noise_stopped: bool = False
 
     @property
     def current_problem(self):
@@ -128,6 +134,16 @@ class Conductor:
                 raise RuntimeError(f"[❌] Required dependency '{b}' not found.")
 
     def get_problem_stages(self):
+        if self.config.task_stages is not None:
+            configured = list(self.config.task_stages)
+            if not configured or not is_ordered_subset(configured, ["diagnosis", "mitigation"]):
+                raise RuntimeError(
+                    "Configured task stages must be a non-empty ordered subset of diagnosis, mitigation"
+                )
+            self.tasklist = configured
+            self.logger.info(f"Using explicitly configured task stages: {configured}")
+            return
+
         file_dir = Path(__file__).resolve().parent
         tasklist_path = file_dir / "tasklist.yml"
 
@@ -172,6 +188,10 @@ class Conductor:
         self.waiting_for_agent = False
         self._evaluating = False
         self.fault_injected = False
+        self._fault_recovered = False
+        self._application_cleaned = False
+        self._cluster_reconciled = False
+        self._noise_stopped = False
 
         if not self.tasklist:
             self.logger.warning("Empty tasklist; no stages configured for this problem.")
@@ -239,6 +259,16 @@ class Conductor:
             problem.diagnosis_oracle.load_diagnosis_checkpoint()
             self.logger.info("Diagnosis checkpoint loaded after fault injection.")
 
+    def inject_problem_fault(self) -> dict:
+        """Inject the prepared problem fault once through a public lifecycle seam."""
+
+        if self.problem is None:
+            raise RuntimeError("Cannot inject a fault before preparing a problem")
+        if self.fault_injected:
+            return {"status": "already_injected", "problem_id": self.problem_id}
+        self._inject_fault()
+        return {"status": "injected", "problem_id": self.problem_id}
+
     def _evaluate_diagnosis(self, solution):
         """Evaluation logic for diagnosis stage."""
         problem = self.current_problem
@@ -294,7 +324,7 @@ class Conductor:
 
         # Inject fault before the first stage if not already done
         if start_index == 0 and not self.fault_injected:
-            self._inject_fault()
+            self.inject_problem_fault()
 
         if start_index < len(self.stage_sequence):
             stage = self.stage_sequence[start_index]
@@ -316,6 +346,64 @@ class Conductor:
             # No more stages; finish the problem
             self._finish_problem()
 
+    def recover_problem_fault(self, _problem=None) -> dict:
+        """Recover the active problem fault once without tearing down the app."""
+
+        problem = self.problem if _problem is None else _problem
+        self._stop_problem_noise()
+        if problem is None:
+            return {"status": "not_loaded", "problem_id": self.problem_id}
+        if self._fault_recovered:
+            return {"status": "already_recovered", "problem_id": self.problem_id}
+        self.logger.info("[CLEANUP] Recovering fault...")
+        problem.recover_fault()
+        self._fault_recovered = True
+        self.fault_injected = False
+        self.logger.info("[CLEANUP] Fault recovered")
+        return {"status": "recovered", "problem_id": self.problem_id}
+
+    def cleanup_problem(self, _problem=None) -> dict:
+        """Tear down the application and reconcile cluster state once."""
+
+        problem = self.problem if _problem is None else _problem
+        self._stop_problem_noise()
+        reconcile_failed = False
+        if not self._application_cleaned:
+            self.logger.info("[CLEANUP] Undeploying app...")
+            if problem:
+                problem.app.cleanup()
+            self._application_cleaned = True
+            self.logger.info("[CLEANUP] App undeployed")
+
+        if self._baseline_captured and not self._cluster_reconciled:
+            self.logger.info("[CLEANUP] Reconciling cluster state to baseline...")
+            try:
+                changes = self.cluster_state.reconcile_to_baseline()
+                if any(v for v in changes.values() if v):
+                    self.logger.info(f"Cluster state reconciliation changes: {changes}")
+                self.logger.info("[CLEANUP] Cluster state reconciled")
+            except Exception as e:
+                self.logger.warning(f"Failed to reconcile cluster state: {e}")
+                reconcile_failed = True
+            else:
+                self._cluster_reconciled = True
+
+        self.submission_stage = "done"
+        return {
+            "status": "cleanup_failed" if reconcile_failed else "cleaned",
+            "problem_id": self.problem_id,
+        }
+
+    def _stop_problem_noise(self) -> None:
+        if not self.config.enable_noise or self._noise_stopped:
+            return
+        try:
+            get_noise_manager().stop()
+            self.logger.info("[CLEANUP] NoiseManager stopped")
+        except Exception as e:
+            self.logger.warning(f"Failed to stop NoiseManager: {e}")
+        self._noise_stopped = True
+
     def _cleanup_sync(self):
         """
         Blocking cleanup operations (fault recovery, app teardown, reconciliation).
@@ -328,40 +416,11 @@ class Conductor:
 
         self.logger.info("[CLEANUP] Starting cleanup (fault recovery, undeploy, reconcile)")
 
-        # Stop noises
-        if self.config.enable_noise:
-            try:
-                nm = get_noise_manager()
-                nm.stop()
-                self.logger.info("[CLEANUP] NoiseManager stopped")
-            except Exception as e:
-                self.logger.warning(f"Failed to stop NoiseManager: {e}")
-
-        # Recover fault using the captured problem reference
+        # The public seams retain the same default order while allowing a host
+        # controller to capture recovery and cleanup independently.
         if problem:
-            self.logger.info("[CLEANUP] Recovering fault...")
-            problem.recover_fault()
-            self.logger.info("[CLEANUP] Fault recovered")
-
-        # Undeploy app using the captured problem reference
-        self.logger.info("[CLEANUP] Undeploying app...")
-        if problem:
-            problem.app.cleanup()
-        self.logger.info("[CLEANUP] App undeployed")
-
-        # Reconcile cluster state to baseline
-        if self._baseline_captured:
-            self.logger.info("[CLEANUP] Reconciling cluster state to baseline...")
-            try:
-                changes = self.cluster_state.reconcile_to_baseline()
-                if any(v for v in changes.values() if v):
-                    self.logger.info(f"Cluster state reconciliation changes: {changes}")
-                self.logger.info("[CLEANUP] Cluster state reconciled")
-            except Exception as e:
-                self.logger.warning(f"Failed to reconcile cluster state: {e}")
-
-        # Set to "done" after all cleanup is complete
-        self.submission_stage = "done"
+            self.recover_problem_fault(problem)
+        self.cleanup_problem(problem)
         self.logger.info("[CLEANUP] Cleanup complete, stage set to 'done'")
 
     def _finish_problem(self):
@@ -380,21 +439,26 @@ class Conductor:
                 f"[STAGE] _finish_problem already ran/running (submission_stage={self.submission_stage!r}); skipping"
             )
             return
+        if self.config.defer_cleanup:
+            self.submission_stage = "awaiting_cleanup"
+            self.logger.info("[STAGE] Evaluation complete; cleanup deferred to host")
+            return
         self.logger.info("[STAGE] Done, starting teardown")
         self.submission_stage = "tearing_down"
         self._cleanup_sync()
         self.logger.info("[STAGE] Teardown complete")
 
-    async def start_problem(self) -> StartProblemResult:
+    async def prepare_problem(self) -> StartProblemResult:
         """
-        1) Provision infra & workload
-        2) Initialize Act registry and execute initial GymActs and first AgentAct precondition
+        Provision the selected problem and build its stages without injecting a fault.
 
         Returns:
             StartProblemResult: Result status indicating success or skip reason
         """
         if self.problem_id is None:
             raise RuntimeError("Cannot start problem: problem_id is not set")
+        if self.submission_stage == "awaiting_cleanup":
+            raise RuntimeError("Host-controlled recovery and cleanup must finish before reuse")
 
         # Wait for the previous problem's executor (evaluation + cleanup) to finish
         # before starting a new problem. _finish_problem() is called synchronously
@@ -452,18 +516,32 @@ class Conductor:
             except Exception as e:
                 self.logger.warning(f"Failed to update NoiseManager context: {e}")
 
-        # After deployment, advance to the first stage
+        self.submission_stage = "prepared"
+        self.logger.info("✅ Deployment complete. Problem prepared; fault not yet injected.")
+        return StartProblemResult.SUCCESS
+
+    async def start_problem(self) -> StartProblemResult:
+        """Preserve the upstream prepare + inject + first-stage behavior."""
+
+        result = await self.prepare_problem()
+        if result is not StartProblemResult.SUCCESS:
+            return result
         self._advance_to_next_stage(start_index=0)
-
-        self.execution_start_time = time.time()  # Reset: measure agent time only
-
+        self.execution_start_time = time.time()
         if self.submission_stage and self.submission_stage != "done":
             self.logger.info(f"✅ Deployment complete. Ready for submission. Current stage is: {self.submission_stage}")
         else:
             self.logger.info(
                 "✅ Deployment complete. No stages configured; problem will complete without agent submission."
             )
-        return StartProblemResult.SUCCESS
+        return result
+
+    async def await_evaluation(self) -> dict:
+        """Wait for the accepted submission evaluation and return a safe result snapshot."""
+
+        if self._submit_future is not None and not self._submit_future.done():
+            await asyncio.wrap_future(self._submit_future)
+        return dict(self.results)
 
     def _submit_evaluate_and_advance(self, sol, current_stage):
         """
@@ -528,6 +606,10 @@ class Conductor:
         # If teardown is in progress, return current results without evaluation
         if self.submission_stage == "tearing_down":
             self.logger.info("Teardown in progress; returning current results without evaluation.")
+            return dict(self.results)
+
+        if self.submission_stage == "awaiting_cleanup":
+            self.logger.info("Evaluation is complete and awaiting host-controlled cleanup.")
             return dict(self.results)
 
         if not self.stage_sequence:

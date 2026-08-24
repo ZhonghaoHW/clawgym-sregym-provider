@@ -45,5 +45,14 @@
     "pyproject.toml",
     "uv.lock"
   ],
-  "core_patches": []
+  "core_patches": [
+    {
+      "path": "sregym/conductor/conductor.py",
+      "rationale": "clawgym_overlay/docs/core-patches/0001-conductor-lifecycle-seam.md",
+      "tests": [
+        "tests/clawgym_overlay/test_conductor_lifecycle_seam.py"
+      ],
+      "sha256": "4bf28fd5263a063bd38490fb7c98571ab61885977d69b625e78b7f22abd44f6b"
+    }
+  ]
 }
