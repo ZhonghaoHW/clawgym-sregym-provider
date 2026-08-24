@@ -232,7 +232,7 @@ def preload_runtime_images(
                     (
                         "docker", "exec", "--privileged", control_node,
                         "ctr", "--namespace=k8s.io", "images", "pull",
-                        "--platform", platform, source,
+                        "--local", "--skip-metadata", "--platform", platform, source,
                     ),
                     attempts=5,
                     stdout=subprocess.DEVNULL,
