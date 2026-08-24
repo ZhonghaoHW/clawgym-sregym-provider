@@ -141,6 +141,28 @@ def test_preload_reuses_complete_control_plane_content_without_registry_pull() -
     assert any(command[7:8] == ("export",) for command in calls)
 
 
+def test_default_readiness_requires_exportable_platform_content() -> None:
+    document = lock_fixture()
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if command[7:8] == ("export",) and kwargs.get("check") is False:
+            return subprocess.CompletedProcess(command, 1)
+        return subprocess.CompletedProcess(command, 0)
+
+    preload_runtime_images(
+        document,
+        "clawgym-formal",
+        runner=run,
+        nodes=("formal-control-plane",),
+        host_seeder=lambda artifact, source, nodes: False,
+        sleeper=lambda seconds: None,
+    )
+
+    assert any(command[7:8] == ("pull",) for command in calls)
+
+
 def test_preload_can_seed_only_verified_host_content_before_pull() -> None:
     document = lock_fixture()
     seeded = []

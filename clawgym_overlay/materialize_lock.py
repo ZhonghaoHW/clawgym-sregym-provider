@@ -96,17 +96,17 @@ def preload_runtime_images(
     worker_nodes = tuple(node for node in nodes if node != control_node)
     if ready_checker is None:
         def ready_checker(node: str, source: str) -> bool:
-            completed = subprocess.run(
+            completed = runner(
                 (
                     "docker", "exec", "--privileged", node,
-                    "ctr", "--namespace=k8s.io", "images", "check", "--quiet",
-                    f"name=={source}",
+                    "ctr", "--namespace=k8s.io", "images", "export",
+                    "--platform", platform, "-", source,
                 ),
                 check=False,
-                capture_output=True,
-                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
-            return completed.returncode == 0 and source in completed.stdout.splitlines()
+            return completed.returncode == 0
 
     def canonical_target(reference: str) -> str:
         head = reference.split("/", maxsplit=1)[0]
