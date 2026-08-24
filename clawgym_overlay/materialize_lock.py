@@ -218,6 +218,15 @@ def preload_runtime_images(
 
         try:
             if not ready_checker(control_node, source):
+                runner(
+                    (
+                        "docker", "exec", "--privileged", control_node,
+                        "ctr", "--namespace=k8s.io", "images", "remove", source,
+                    ),
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
                 execute(
                     "pull",
                     (

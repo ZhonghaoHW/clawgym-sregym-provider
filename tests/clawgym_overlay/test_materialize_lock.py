@@ -62,17 +62,21 @@ def test_preload_images_uses_only_locked_sources_and_declared_targets() -> None:
 
     images = [item for item in document["artifacts"] if item["name"].startswith("runtime-image.")]
     assert result["image_count"] == len(images)
-    assert len(calls) == 5 * len(images)
-    assert all(call[1]["check"] is True for call in calls)
-    pulls = calls[::5]
+    assert len(calls) == 6 * len(images)
+    removals = calls[::6]
+    non_removals = [call for index, call in enumerate(calls) if index % 6]
+    assert all(call[1]["check"] is False for call in removals)
+    assert all(call[1]["check"] is True for call in non_removals)
+    assert all(call[0][7:8] == ("remove",) for call in removals)
+    pulls = calls[1::6]
     assert all(call[0][0:3] == ("docker", "exec", "--privileged") for call in pulls)
     assert all(call[0][8:10] == ("--platform", "linux/amd64") for call in pulls)
     assert all("latest" not in call[0][10] for call in pulls)
-    exports = calls[2::5]
+    exports = calls[3::6]
     assert all(call[0][7:10] == ("export", "--platform", "linux/amd64") for call in exports)
-    imports = calls[3::5]
+    imports = calls[4::6]
     assert all(call[0][8:10] == ("import", "--platform") for call in imports)
-    tags = calls[1::5] + calls[4::5]
+    tags = calls[2::6] + calls[5::6]
     assert all(call[0][7:9] == ("tag", "--force") for call in tags)
     assert any(call[0][-1] == "docker.io/library/runtime-image.probe:latest" for call in tags)
 
