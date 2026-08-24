@@ -57,6 +57,12 @@ file digest is bound by the execution profile alongside the published
 deployment lock, so either topology or dependency changes create a new
 `EnvironmentRelease`.
 
+Docker 29's containerd image store exports multi-platform indexes even when
+only the worker's platform content is present. The formal preloader therefore
+exports a temporary `linux/amd64` archive for each digest and uses Kind's
+archive loader. The archive is deleted after each load; mutable tags and
+unlocked registry resolution remain forbidden.
+
 ## GitHub App source access
 
 The worker obtains source only through the explicitly installed read-only

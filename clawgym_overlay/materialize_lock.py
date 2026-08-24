@@ -8,6 +8,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import urllib.request
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -72,17 +73,47 @@ def preload_runtime_images(
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", cluster_name):
         raise LockedRuntimeError("Kind cluster name is invalid")
     identities: list[str] = []
+    platform = document["platform"].replace("-", "/", 1)
     for artifact in sorted(document["artifacts"], key=lambda item: item["name"]):
         if not artifact["name"].startswith("runtime-image."):
             continue
         source = artifact["source"].removeprefix("oci://")
         target = artifact["target"]
-        for command in (
-            ("docker", "pull", source),
-            ("docker", "tag", source, target),
-            ("kind", "load", "docker-image", "--name", cluster_name, target),
-        ):
-            runner(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        descriptor, archive_name = tempfile.mkstemp(prefix="clawgym-image-", suffix=".tar")
+        os.close(descriptor)
+        archive = Path(archive_name)
+        archive.unlink()
+        try:
+            for command in (
+                ("docker", "pull", "--platform", platform, source),
+                ("docker", "tag", source, target),
+                (
+                    "docker",
+                    "image",
+                    "save",
+                    "--platform",
+                    platform,
+                    "--output",
+                    str(archive),
+                    target,
+                ),
+                (
+                    "kind",
+                    "load",
+                    "image-archive",
+                    "--name",
+                    cluster_name,
+                    str(archive),
+                ),
+            ):
+                runner(
+                    command,
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+        finally:
+            archive.unlink(missing_ok=True)
         identities.append(f"{target}:{artifact['integrity']}")
     return {
         "schema_id": "clawgym.sregym_preloaded_images.v1",
