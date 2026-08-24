@@ -1,0 +1,6 @@
+{
+  "schema_id": "clawgym.retained_filesystem_profile.v1",
+  "artifact_sink_id": "clawgym.retained-filesystem.v1",
+  "write_mode": "exclusive-atomic-json",
+  "sensitive_content_rejection": true
+}

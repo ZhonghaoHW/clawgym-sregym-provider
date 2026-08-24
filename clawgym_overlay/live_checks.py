@@ -204,3 +204,36 @@ def delete_validation_network_policy(
             return {"deleted": True}
         raise
     return {"deleted": False}
+
+
+def build_kubernetes_telemetry_snapshotter(conductor: Any) -> SREGymLiveTelemetrySnapshotter:
+    """Bind three fixed read-only service-proxy queries to the host Kubernetes client."""
+
+    core = conductor.kubectl.core_v1_api
+
+    def service_query(name: str, path: str):
+        return lambda: core.connect_get_namespaced_service_proxy_with_path(
+            name=name,
+            namespace="observe",
+            path=path,
+        )
+
+    return SREGymLiveTelemetrySnapshotter(
+        (
+            SafeTelemetryQuery(
+                "prometheus",
+                service_query("prometheus-server:80", "api/v1/query?query=up"),
+            ),
+            SafeTelemetryQuery(
+                "loki",
+                service_query(
+                    "loki-gateway:80",
+                    "loki/api/v1/query?query=%7Bnamespace%3D%22hotel-reservation%22%7D",
+                ),
+            ),
+            SafeTelemetryQuery(
+                "jaeger",
+                service_query("jaeger-out:16686", "api/traces?service=frontend&limit=20"),
+            ),
+        )
+    )

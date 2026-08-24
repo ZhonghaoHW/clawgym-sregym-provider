@@ -746,7 +746,7 @@ wheels = [
 [[package]]
 name = "clawgym"
 version = "0.1.0"
-source = { git = "https://github.com/ZhonghaoHW/clawgym.git?rev=828b0195c61ce373504044763dc9cc8fbe7093bb#828b0195c61ce373504044763dc9cc8fbe7093bb" }
+source = { git = "https://github.com/ZhonghaoHW/clawgym.git?rev=ccacf6df84b67e06863783ab47d8aa73ec827ea5#ccacf6df84b67e06863783ab47d8aa73ec827ea5" }
 dependencies = [
     { name = "jsonschema" },
 ]
@@ -4148,7 +4148,7 @@ requires-dist = [
     { name = "certifi", specifier = "==2025.4.26" },
     { name = "cffi", specifier = "==1.17.1" },
     { name = "charset-normalizer", specifier = "==3.4.2" },
-    { name = "clawgym", git = "https://github.com/ZhonghaoHW/clawgym.git?rev=828b0195c61ce373504044763dc9cc8fbe7093bb" },
+    { name = "clawgym", git = "https://github.com/ZhonghaoHW/clawgym.git?rev=ccacf6df84b67e06863783ab47d8aa73ec827ea5" },
     { name = "click", specifier = "==8.2.1" },
     { name = "cloudpickle", specifier = "==3.1.1" },
     { name = "colorama", specifier = "==0.4.6" },

@@ -1,0 +1,9 @@
+{
+  "schema_id": "clawgym.sregym_environment_validation_profile.v1",
+  "adapter_id": "sregym.environment-validation.v1",
+  "lane": "environment_validation",
+  "operation": "delete-network-policy",
+  "namespace": "hotel-reservation",
+  "resource_name": "deny-all-recommendation",
+  "model_access": false
+}
