@@ -115,6 +115,7 @@ _SCHEMAS: Final[dict[str, tuple[str, frozenset[str]]]] = {
                 "deployment_cache_policy",
                 "runtime_image_policy",
                 "deployment_lock_digest",
+                "kind_topology_sha256",
             }
         ),
     ),
@@ -243,6 +244,11 @@ def _validate_manifest(kind: str, document: Mapping[str, Any]) -> None:
             raise ContractValidationError("runtime images must be a declared subset")
         if not re.fullmatch(r"[0-9a-f]{64}", _string(document["deployment_lock_digest"], "deployment_lock_digest")):
             raise ContractValidationError("deployment_lock_digest must be a SHA-256 digest")
+        if not re.fullmatch(
+            r"[0-9a-f]{64}",
+            _string(document["kind_topology_sha256"], "kind_topology_sha256"),
+        ):
+            raise ContractValidationError("kind_topology_sha256 must be a SHA-256 digest")
 
 
 def load_release_manifests(root: str | Path) -> dict[str, dict[str, Any]]:

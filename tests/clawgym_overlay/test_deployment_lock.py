@@ -12,6 +12,7 @@ from clawgym_overlay.deployment_lock import (
     load_deployment_lock,
     validate_deployment_lock,
 )
+from clawgym_overlay.worker import verify_formal_kind_topology
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -126,3 +127,22 @@ def test_committed_wp4_lock_is_valid_and_bound_by_execution_profile() -> None:
 
     assert len(document["artifacts"]) == 50
     assert profile["deployment_lock_digest"] == deployment_lock_digest(document)
+
+
+def test_formal_kind_topology_is_content_addressed_by_execution_profile() -> None:
+    import hashlib
+
+    profile = json.loads(
+        (ROOT / "clawgym_overlay/manifests/execution.sregym-container.v1.json").read_text()
+    )
+    topology = (ROOT / "clawgym_overlay/kind.wp4.formal.yaml").read_bytes()
+
+    assert profile["kind_topology_sha256"] == hashlib.sha256(topology).hexdigest()
+    assert topology.count(b"role: worker") == 3
+    assert topology.count(b"role: control-plane") == 1
+    assert b"disableDefaultCNI: true" in topology
+    assert verify_formal_kind_topology(ROOT, profile).name == "kind.wp4.formal.yaml"
+
+    profile["kind_topology_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="topology"):
+        verify_formal_kind_topology(ROOT, profile)

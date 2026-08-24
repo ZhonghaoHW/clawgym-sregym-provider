@@ -52,8 +52,10 @@ the fixed staging Kind, kubectl, Helm, and uv downloads before installing them
 under `/home/ecs-user/.local/bin`. It has no sudo authority.
 
 `bootstrap/staging-kind-config.yaml` is only the temporary four-node staging
-cluster topology. The formal cluster is created later from the published
-deployment lock, never from this staging file.
+cluster topology. The formal cluster uses `kind.wp4.formal.yaml`; its exact
+file digest is bound by the execution profile alongside the published
+deployment lock, so either topology or dependency changes create a new
+`EnvironmentRelease`.
 
 ## GitHub App source access
 

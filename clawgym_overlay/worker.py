@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -44,6 +45,14 @@ def _binding(implementation) -> ProviderBinding:
     )
 
 
+def verify_formal_kind_topology(provider_root: Path, execution_profile: dict) -> Path:
+    topology = provider_root / "clawgym_overlay" / "kind.wp4.formal.yaml"
+    actual = hashlib.sha256(topology.read_bytes()).hexdigest()
+    if actual != execution_profile.get("kind_topology_sha256"):
+        raise ValueError("formal Kind topology does not match the execution profile")
+    return topology
+
+
 def execute(args: argparse.Namespace) -> None:
     provider_root = Path(args.provider_checkout).resolve(strict=True)
     clawgym_root = Path(args.clawgym_checkout).resolve(strict=True)
@@ -69,6 +78,7 @@ def execute(args: argparse.Namespace) -> None:
     )["execution"]
     if execution_profile["deployment_lock_digest"] != deployment_lock_digest(deployment_lock):
         raise ValueError("execution profile does not identify the deployment lock")
+    verify_formal_kind_topology(provider_root, execution_profile)
     locked_runtime = LockedRuntime(deployment_lock, args.deployment_cache)
     conductor_config = ConductorConfig(
             deploy_loki=True,
