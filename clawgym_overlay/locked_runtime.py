@@ -88,10 +88,17 @@ class LockedRuntime:
 
     def cluster_image_inventory(self, conductor: Any) -> dict[str, Any]:
         pods = conductor.kubectl.core_v1_api.list_pod_for_all_namespaces().items
+        # Kubernetes/containerd may report either the multi-platform index
+        # digest or the selected linux/amd64 manifest digest in
+        # ``status.imageID``.  Both identities are locked; accepting either
+        # keeps the inventory check strict without depending on the runtime's
+        # reporting choice.
         declared_digests = {
-            self._image_digest(artifact["platform_integrity"])
+            self._image_digest(artifact[field])
             for artifact in self.document["artifacts"]
-            if artifact["kind"] == "image" and artifact["name"].startswith("runtime-image.")
+            if artifact["kind"] == "image"
+            and artifact["name"].startswith("runtime-image.")
+            for field in ("integrity", "platform_integrity")
         }
         bundled_targets = {
             artifact["target"]
