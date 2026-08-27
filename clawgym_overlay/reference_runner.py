@@ -89,6 +89,7 @@ class SafeStratusRunner:
         ).stdout.strip()
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
             raise RuntimeError("reference agent image does not have a local SHA-256 identity")
+        command_profile = self._profile["command"]
         started = time.monotonic()
         with tempfile.TemporaryDirectory(prefix="clawgym-wp5-agent-") as logs:
             command = [
@@ -106,8 +107,9 @@ class SafeStratusRunner:
                 "-e", f"AGENT_API_KEY={key}",
                 "-e", "API_HOSTNAME=host.docker.internal",
                 "-e", "MCP_SERVER_URL=http://host.docker.internal:9954",
+                "--entrypoint", command_profile[0],
                 image_id,
-                *self._profile["command"],
+                *command_profile[1:],
             ]
             completed = subprocess.run(command, capture_output=True, text=False, timeout=1800, check=False)
             transcript = completed.stdout + completed.stderr

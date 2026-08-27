@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from clawgym_overlay.reference_runner import (
     ReferenceAgentSecretError,
+    SafeStratusRunner,
     _safe_text,
     read_agent_secret,
 )
@@ -40,3 +42,36 @@ def test_safe_text_redacts_model_key_material_and_host_paths() -> None:
     assert "/var/run/example" not in safe
     assert "[REDACTED]" in safe
     assert "[HOST_PATH]" in safe
+
+
+def test_runner_replaces_shell_entrypoint_with_frozen_python_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    secret = tmp_path / "agent-key"
+    secret.write_text("not-a-real-key")
+    secret.chmod(0o600)
+    kubeconfig = tmp_path / "filtered-kubeconfig"
+    kubeconfig.write_text("safe")
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        if command[:3] == ["docker", "image", "inspect"]:
+            return SimpleNamespace(stdout="sha256:" + "a" * 64 + "\n")
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("clawgym_overlay.reference_runner.subprocess.run", fake_run)
+    runner = SafeStratusRunner(
+        profile={
+            "model_id": "openai/deepseek-v4-pro",
+            "api_base": "https://example.invalid/v1",
+            "command": ["python", "-m", "clients.stratus.stratus_agent.driver.driver"],
+        },
+        secret_file=secret,
+    )
+    result = runner(SimpleNamespace(manifest_digest="a" * 64), str(kubeconfig))
+    docker = calls[1]
+    entrypoint = docker.index("--entrypoint")
+    assert docker[entrypoint + 1] == "python"
+    assert docker[-2:] == ["-m", "clients.stratus.stratus_agent.driver.driver"]
+    assert result.image_digest == "a" * 64
