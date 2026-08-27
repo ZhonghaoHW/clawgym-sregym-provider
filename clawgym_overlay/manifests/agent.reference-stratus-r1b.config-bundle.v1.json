@@ -9,8 +9,8 @@
     {
       "path": "reference-r1b/mitigation_agent_config.yaml",
       "container_path": "/opt/sregym/clients/stratus/configs/mitigation_agent_config.yaml",
-      "sha256_digest": "ed2bc57fab6bb86597443068c31a4f37097c979d112078cfd31eaf0193d067da"
+      "sha256_digest": "4bf33b731f00be56df4a5f390502ee5c73bb8ae519cf5c88ed3e16872d5b844b"
     }
   ],
-  "bundle_digest": "8c7d14f9c8af72ea0cd4b3b362ab0f670c683ddb62c0103f353c958b477cc78b"
+  "bundle_digest": "ac5ed1ac6d2c19f7707cd638be33c93ac28d8f630ccf34416bcd8969401bf39a"
 }

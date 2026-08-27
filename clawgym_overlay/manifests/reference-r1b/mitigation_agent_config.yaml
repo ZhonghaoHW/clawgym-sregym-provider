@@ -1,6 +1,6 @@
 # R1b bounded SOP: preserve upstream tools while capping transcript growth.
 max_step: 8
-max_retry_attempts: 10
+max_retry_attempts: 1
 retry_mode: validate
 sync_tools:
   - name: wait_tool
