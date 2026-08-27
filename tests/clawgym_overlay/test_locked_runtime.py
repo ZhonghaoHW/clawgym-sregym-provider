@@ -116,3 +116,16 @@ def test_cluster_inventory_accepts_index_digest_reported_by_containerd(tmp_path)
     result = locked.cluster_image_inventory(conductor)
 
     assert result["passed"] is True
+
+
+def test_cluster_inventory_accepts_bare_containerd_sha256(tmp_path) -> None:
+    locked, document = runtime(tmp_path)
+    declared = next(item for item in document["artifacts"] if item["name"].startswith("runtime-image."))
+    status = SimpleNamespace(name="application", image_id=declared["platform_integrity"])
+    pod = SimpleNamespace(
+        spec=SimpleNamespace(init_containers=[], containers=[SimpleNamespace(name="application", image=declared["target"])]),
+        status=SimpleNamespace(init_container_statuses=[], container_statuses=[status]),
+    )
+    core = SimpleNamespace(list_pod_for_all_namespaces=lambda: SimpleNamespace(items=[pod]))
+    result = locked.cluster_image_inventory(SimpleNamespace(kubectl=SimpleNamespace(core_v1_api=core)))
+    assert result["passed"] is True

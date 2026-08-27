@@ -124,7 +124,7 @@ class LockedRuntime:
                     if not status.image_id:
                         continue
                     container_count += 1
-                    if "@sha256:" in status.image_id:
+                    if "@sha256:" in status.image_id or status.image_id.startswith("sha256:"):
                         digest = self._image_digest(status.image_id)
                         if digest not in declared_digests:
                             raise LockedRuntimeError(
