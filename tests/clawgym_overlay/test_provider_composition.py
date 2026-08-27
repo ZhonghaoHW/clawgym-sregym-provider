@@ -26,8 +26,10 @@ from clawgym.providers import (
 from clawgym.runtime import LifecycleController
 from clawgym_overlay.composition import register_sregym_providers
 from clawgym_overlay.providers import (
+    ReferenceAgentExecution,
     SREGymEnvironmentValidationAdapter,
     SREGymObservationProvider,
+    SREGymReferenceAgentAdapter,
     SREGymOracleProvider,
 )
 from clawgym_overlay.providers.sregym import _SREGymAccessHandle
@@ -298,6 +300,29 @@ def test_validation_adapter_is_no_model_and_lane_restricted() -> None:
     ]
     with pytest.raises(RuntimeError, match="environment_validation"):
         adapter.invoke(SimpleNamespace(lane="evaluation", manifest_digest="a" * 64), access)
+
+
+def test_reference_adapter_requires_agent_validation_and_filtered_access() -> None:
+    adapter = SREGymReferenceAgentAdapter(
+        sha256_digest({"adapter": "reference"}),
+        lambda run, kubeconfig: ReferenceAgentExecution(
+            exit_code=0,
+            submission={"agent_claimed_verdict": "pass"},
+            duration_ms=12,
+            transcript_digest="a" * 64,
+            transcript_bytes=123,
+        ),
+        clock=lambda: NOW,
+    )
+    access = _SREGymAccessHandle("/temporary/filtered-kubeconfig")
+    run = SimpleNamespace(lane="agent_validation", manifest_digest="a" * 64)
+    result = adapter.invoke(run, access)
+    assert result.outcome.status == "succeeded"
+    assert result.outcome.evidence[0].document["summary"]["transcript_bytes"] == 123
+    with pytest.raises(RuntimeError, match="agent_validation"):
+        adapter.invoke(SimpleNamespace(lane="evaluation", manifest_digest="a" * 64), access)
+    with pytest.raises(RuntimeError, match="filtered"):
+        adapter.invoke(run, object())
 
 
 def test_causal_observation_provider_requires_complete_successful_transition() -> None:

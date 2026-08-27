@@ -7,6 +7,7 @@ import pytest
 
 from clawgym.contracts import ContractValidationError, sha256_digest
 from clawgym_overlay.validation_profiles import load_validation_profiles
+from clawgym_overlay.reference_profiles import load_reference_agent_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -32,3 +33,11 @@ def test_validation_profile_cannot_expand_authority(tmp_path: Path) -> None:
     path.write_text(json.dumps(document))
     with pytest.raises(ContractValidationError, match="fixed authority"):
         load_validation_profiles(tmp_path)
+
+
+def test_reference_agent_profile_freezes_gateway_model_and_credential_policy() -> None:
+    profile = load_reference_agent_profile(MANIFESTS)
+    assert profile["lane"] == "agent_validation"
+    assert profile["model_id"] == "openai/deepseek-v4-pro"
+    assert profile["runtime_injection"] == "host-only-file"
+    assert "api_key" not in profile

@@ -176,6 +176,9 @@ trace_output/
 metrics_output/
 .runtime/
 
+# Local-only WP5 model credentials. Never commit this directory or its contents.
+clawgym_overlay/.secrets/
+
 # Ignore telemetry data directories
 sregym/observer/telemetry_data_*/
 

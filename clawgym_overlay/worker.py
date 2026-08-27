@@ -21,7 +21,9 @@ from clawgym_overlay.live_checks import (
 )
 from clawgym_overlay.deployment_lock import deployment_lock_digest, load_deployment_lock
 from clawgym_overlay.locked_runtime import LockedRuntime
-from clawgym_overlay.providers import SREGymEnvironmentValidationAdapter
+from clawgym_overlay.providers import SREGymEnvironmentValidationAdapter, SREGymReferenceAgentAdapter
+from clawgym_overlay.reference_profiles import load_reference_agent_profile
+from clawgym_overlay.reference_runner import SafeStratusRunner
 from clawgym_overlay.release import load_release_manifests
 from clawgym_overlay.validation_profiles import load_validation_profiles
 
@@ -118,16 +120,29 @@ def execute(args: argparse.Namespace) -> None:
         ),
         access_verifier=verify_filtered_kubernetes_access,
     )
-    adapter = SREGymEnvironmentValidationAdapter(
-        sha256_digest(adapter_profile),
-        delete_validation_network_policy,
-        namespace=adapter_profile["namespace"],
-        policy_name=adapter_profile["resource_name"],
-        steady_state_probe=lambda: bool(
-            conductor.current_problem.mitigation_oracle._run_recommendation_probe()
-        ),
-        telemetry_capture=telemetry.capture,
-    )
+    if run_document.get("lane") == "agent_validation":
+        profile = load_reference_agent_profile(manifest_root)
+        if agent_document.get("adapter_id") != profile["adapter_id"]:
+            raise ValueError("AgentRelease does not identify the frozen reference adapter")
+        if agent_document.get("invocation_profile_digest") != sha256_digest(profile):
+            raise ValueError("AgentRelease does not identify the frozen invocation profile")
+        if not args.agent_secret_file:
+            raise ValueError("WP5 reference worker requires --agent-secret-file")
+        adapter = SREGymReferenceAgentAdapter(
+            sha256_digest(profile),
+            SafeStratusRunner(profile=profile, secret_file=args.agent_secret_file),
+        )
+    else:
+        adapter = SREGymEnvironmentValidationAdapter(
+            sha256_digest(adapter_profile),
+            delete_validation_network_policy,
+            namespace=adapter_profile["namespace"],
+            policy_name=adapter_profile["resource_name"],
+            steady_state_probe=lambda: bool(
+                conductor.current_problem.mitigation_oracle._run_recommendation_probe()
+            ),
+            telemetry_capture=telemetry.capture,
+        )
     registry.register_binding(_binding(adapter))
     run_id = run_document.get("run_id")
     sink = RetainedArtifactSink(
@@ -138,8 +153,8 @@ def execute(args: argparse.Namespace) -> None:
     )
     registry.register_binding(_binding(sink))
     run = RunManifest.from_dict(run_document, registry=registry)
-    if run.lane != "environment_validation":
-        raise ValueError("WP4 live worker requires environment_validation lane")
+    if run.lane not in {"environment_validation", "agent_validation"}:
+        raise ValueError("live worker requires a reviewed validation lane")
     sink.write_bytes(
         "host/source-checkouts.json",
         canonical_json_bytes(
@@ -180,6 +195,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--provider-checkout", required=True)
     command.add_argument("--provider-revision", required=True)
     command.add_argument("--deployment-cache", required=True)
+    command.add_argument("--agent-secret-file")
     command.set_defaults(handler=execute)
     return result
 

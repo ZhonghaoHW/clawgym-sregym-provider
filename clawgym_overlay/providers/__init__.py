@@ -8,6 +8,10 @@ from clawgym_overlay.providers.sregym import (
     SREGymOracleProvider,
     SREGymToolAccessProvider,
 )
+from clawgym_overlay.providers.reference_agent import (
+    ReferenceAgentExecution,
+    SREGymReferenceAgentAdapter,
+)
 
 __all__ = [
     "SREGymEnvironmentProvider",
@@ -16,4 +20,6 @@ __all__ = [
     "SREGymObservationProvider",
     "SREGymOracleProvider",
     "SREGymToolAccessProvider",
+    "ReferenceAgentExecution",
+    "SREGymReferenceAgentAdapter",
 ]
