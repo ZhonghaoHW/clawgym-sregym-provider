@@ -107,6 +107,7 @@ class SafeStratusRunner:
                 "-e", f"AGENT_MODEL_ID={self._profile['model_id']}",
                 "-e", f"AGENT_API_BASE={self._profile['api_base']}",
                 "-e", f"AGENT_API_KEY={key}",
+                "-e", f"SREGYM_ARTIFACT_ID={self._profile['artifact_id']}",
                 "-e", "API_HOSTNAME=host.docker.internal",
                 "-e", "MCP_SERVER_URL=http://host.docker.internal:9954",
                 "--entrypoint", command_profile[0],

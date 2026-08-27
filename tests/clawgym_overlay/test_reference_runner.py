@@ -65,6 +65,7 @@ def test_runner_replaces_shell_entrypoint_with_frozen_python_command(
         profile={
             "model_id": "openai/deepseek-v4-pro",
             "api_base": "https://example.invalid/v1",
+            "artifact_id": "network_policy_block",
             "command": ["python", "-m", "clients.stratus.stratus_agent.driver.driver"],
         },
         secret_file=secret,
@@ -77,4 +78,5 @@ def test_runner_replaces_shell_entrypoint_with_frozen_python_command(
     assert "--user" in docker
     assert any(item.endswith(":/home/agent/.kube/config:ro") for item in docker)
     assert "KUBECONFIG=/home/agent/.kube/config" in docker
+    assert "SREGYM_ARTIFACT_ID=network_policy_block" in docker
     assert result.image_digest == "a" * 64

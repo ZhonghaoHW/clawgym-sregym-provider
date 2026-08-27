@@ -15,6 +15,7 @@ _EXPECTED = {
     "adapter_id",
     "lane",
     "agent",
+    "artifact_id",
     "model_id",
     "api_base",
     "command",
@@ -33,7 +34,11 @@ def load_reference_agent_profile(manifest_root: str | Path) -> dict[str, Any]:
         raise ContractValidationError("reference agent profile has invalid schema_id")
     if document["adapter_id"] != "sregym.reference-agent.v1":
         raise ContractValidationError("reference agent profile has invalid adapter ID")
-    if document["lane"] != "agent_validation" or document["agent"] != "stratus":
+    if (
+        document["lane"] != "agent_validation"
+        or document["agent"] != "stratus"
+        or document["artifact_id"] != "network_policy_block"
+    ):
         raise ContractValidationError("reference agent profile has invalid lane or agent")
     if document["model_id"] != "openai/deepseek-v4-pro":
         raise ContractValidationError("reference agent model must remain frozen")

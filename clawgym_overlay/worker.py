@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import threading
 from pathlib import Path
 
 from clawgym.artifacts import RetainedArtifactSink
@@ -78,6 +80,7 @@ def execute(args: argparse.Namespace) -> None:
     verify_release_revisions(agent_document, environment_document, args.provider_revision)
 
     from sregym.conductor.conductor import Conductor, ConductorConfig
+    from sregym.conductor.conductor_api import request_shutdown, run_api
 
     deployment_lock = load_deployment_lock(
         provider_root / "clawgym_overlay" / "deployment.wp4.lock.json"
@@ -98,6 +101,15 @@ def execute(args: argparse.Namespace) -> None:
     locked_runtime.configure_conductor(conductor_config)
     conductor = Conductor(conductor_config)
     locked_runtime.configure_services(conductor)
+    os.environ["API_BIND_HOST"] = "0.0.0.0"
+    os.environ["API_PORT"] = "8000"
+    api_thread = threading.Thread(
+        target=run_api,
+        args=(conductor,),
+        name="clawgym-wp5-conductor-api",
+        daemon=True,
+    )
+    api_thread.start()
     manifest_root = provider_root / "clawgym_overlay" / "manifests"
     manifests = load_release_manifests(manifest_root)
     adapter_profile, sink_profile = load_validation_profiles(manifest_root)
@@ -172,14 +184,18 @@ def execute(args: argparse.Namespace) -> None:
         canonical_json_bytes(locked_runtime.cache_summary()),
         media_type="application/json",
     )
-    result = execute_worker(
-        episode_id=args.episode_id,
-        run_document=run_document,
-        agent_release_document=agent_document,
-        environment_release_document=environment_document,
-        registry=registry,
-    )
-    print(json.dumps({"bundle_digest": result.bundle_digest, "episode_digest": result.episode_digest}))
+    try:
+        result = execute_worker(
+            episode_id=args.episode_id,
+            run_document=run_document,
+            agent_release_document=agent_document,
+            environment_release_document=environment_document,
+            registry=registry,
+        )
+        print(json.dumps({"bundle_digest": result.bundle_digest, "episode_digest": result.episode_digest}))
+    finally:
+        request_shutdown()
+        api_thread.join(timeout=15)
 
 
 def parser() -> argparse.ArgumentParser:
