@@ -17,10 +17,16 @@ from clawgym_overlay.providers.reference_agent import ReferenceAgentExecution
 
 
 _SENSITIVE_OUTPUT = re.compile(
-    r"(?i)(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}|"
+    r"(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}|"
     r"(?:sk|ak)-[A-Za-z0-9_-]{12,}|"
     r"\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b|"
-    r"-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|CERTIFICATE)-----"
+    r"-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|CERTIFICATE)-----|"
+    r"\bclient-(?:certificate|key)-data\s*:|"
+    r"\b(?:apiVersion:\s*v1\s+)?clusters\s*:|"
+    r"(?:unix://)?/var/run/docker\.sock|"
+    r"\bi-[a-z0-9]{8,}\b|"
+    r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9])",
+    re.IGNORECASE,
 )
 
 

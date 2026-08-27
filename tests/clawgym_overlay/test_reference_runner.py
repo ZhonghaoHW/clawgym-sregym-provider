@@ -37,9 +37,15 @@ def test_reference_secret_rejects_empty_or_symlink(tmp_path: Path) -> None:
 
 
 def test_safe_text_redacts_model_key_material_and_host_paths() -> None:
-    safe = _safe_text(b"Authorization: Bearer abcdefghijklmnop /var/run/example")
+    safe = _safe_text(
+        b"Authorization: Bearer abcdefghijklmnop /var/run/example "
+        b"10.20.1.27 i-t4nf7igf5ax6pg9s8jc1 client-key-data:"
+    )
     assert "abcdefghijklmnop" not in safe
     assert "/var/run/example" not in safe
+    assert "10.20.1.27" not in safe
+    assert "i-t4nf7igf5ax6pg9s8jc1" not in safe
+    assert "client-key-data:" not in safe
     assert "[REDACTED]" in safe
     assert "[HOST_PATH]" in safe
 
