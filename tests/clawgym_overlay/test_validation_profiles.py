@@ -64,3 +64,29 @@ def test_reference_r1b_profile_is_bounded_and_explicitly_registered() -> None:
     assert profile["sop_variant"] == "r1-evidence-first-bounded-v1"
     assert profile["bounded_execution"]["diagnosis_max_steps"] == 8
     assert profile["bounded_execution"]["container_timeout_seconds"] == 900
+
+
+def test_reference_r1c_profiles_are_explicit_and_model_pinned() -> None:
+    for filename, variant, model in (
+        (
+            "agent.reference-stratus-r1c.v1.json",
+            "r1c-structured-attribution-v1",
+            "openai/glm-5.3-flash",
+        ),
+        (
+            "agent.reference-stratus-r1c-deepseek.v1.json",
+            "r1c-structured-attribution-deepseek-v1",
+            "openai/deepseek-v4-pro",
+        ),
+    ):
+        profile = load_reference_agent_profile(
+            MANIFESTS,
+            profile_digest=sha256_digest(json.loads((MANIFESTS / filename).read_text())),
+        )
+        assert profile["sop_variant"] == variant
+        assert profile["model_id"] == model
+        assert profile["bounded_execution"] == {
+            "diagnosis_max_steps": 8,
+            "mitigation_max_steps": 8,
+            "container_timeout_seconds": 900,
+        }

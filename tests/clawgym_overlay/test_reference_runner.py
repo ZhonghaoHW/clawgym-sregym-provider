@@ -88,6 +88,8 @@ def test_runner_replaces_shell_entrypoint_with_frozen_python_command(
     assert any(item.endswith(":/home/agent/.kube/config:ro") for item in docker)
     assert "KUBECONFIG=/home/agent/.kube/config" in docker
     assert "SREGYM_ARTIFACT_ID=network_policy_block" in docker
+    assert "--env-file" in docker
+    assert "AGENT_API_KEY=not-a-real-key" not in docker
     assert result.image_digest == "a" * 64
 
 
