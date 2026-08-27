@@ -41,3 +41,14 @@ def test_reference_agent_profile_freezes_gateway_model_and_credential_policy() -
     assert profile["model_id"] == "openai/deepseek-v4-pro"
     assert profile["runtime_injection"] == "host-only-file"
     assert "api_key" not in profile
+
+
+def test_reference_r1_profile_is_explicitly_registered() -> None:
+    profile = load_reference_agent_profile(
+        MANIFESTS,
+        profile_digest=sha256_digest(
+            json.loads((MANIFESTS / "agent.reference-stratus-r1.v1.json").read_text())
+        ),
+    )
+    assert profile["sop_variant"] == "r1-evidence-first"
+    assert profile["model_id"] == "openai/deepseek-v4-pro"
