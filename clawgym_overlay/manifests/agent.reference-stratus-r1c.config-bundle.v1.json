@@ -1,0 +1,16 @@
+{
+  "schema_id": "clawgym.sregym_reference_agent_config_bundle.v1",
+  "files": [
+    {
+      "path": "reference-r1c/diagnosis_agent_config.yaml",
+      "container_path": "/opt/sregym/clients/stratus/configs/diagnosis_agent_config.yaml",
+      "sha256_digest": "1a5c2e65ad73135cee350a13fa27d35ab1f0c52ba396d714c444f1cf1551ed87"
+    },
+    {
+      "path": "reference-r1c/mitigation_agent_config.yaml",
+      "container_path": "/opt/sregym/clients/stratus/configs/mitigation_agent_config.yaml",
+      "sha256_digest": "258c6e6a85392792d4b7c810d1c3649ba2b370d26ed94f5c8512d30f81b774e5"
+    }
+  ],
+  "bundle_digest": "29760754d7874d77e06ee31f5bcf4d16bf59d1511b5348251dc7c8d63d7f113e"
+}

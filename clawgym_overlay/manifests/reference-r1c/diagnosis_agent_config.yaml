@@ -1,0 +1,5 @@
+system_prompt_suffix: |
+  R1c bounded SOP: by step 7 submit a structured JSON handoff with exactly the
+  symptom, target_component, evidence, root_cause_hypothesis, candidate_resource,
+  minimal_remediation, and verification_plan fields. For network_policy_block,
+  inspect NetworkPolicy selectors and service labels before proposing a minimal fix.

@@ -24,6 +24,7 @@ _BASE_EXPECTED = {
 }
 
 _R1B_EXTRA = {"sop_variant", "bounded_execution", "config_bundle_digest"}
+_R1C_EXTRA = _R1B_EXTRA
 
 
 def load_reference_agent_profile(
@@ -34,6 +35,7 @@ def load_reference_agent_profile(
         root / "agent.reference-stratus.v1.json",
         root / "agent.reference-stratus-r1.v1.json",
         root / "agent.reference-stratus-r1b.v1.json",
+        root / "agent.reference-stratus-r1c.v1.json",
     ]
     candidates = [candidate for candidate in candidates if candidate.is_file()]
     path = next(
@@ -57,8 +59,8 @@ def load_reference_agent_profile(
         or document["artifact_id"] != "network_policy_block"
     ):
         raise ContractValidationError("reference agent profile has invalid lane or agent")
-    if document["model_id"] != "openai/deepseek-v4-pro":
-        raise ContractValidationError("reference agent model must remain frozen")
+    if document["model_id"] not in {"openai/deepseek-v4-pro", "openai/glm-5.3-flash"}:
+        raise ContractValidationError("reference agent model is not registered")
     if document["api_base"] != "https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1":
         raise ContractValidationError("reference agent endpoint must remain frozen")
     if (
@@ -68,6 +70,8 @@ def load_reference_agent_profile(
         raise ContractValidationError("reference agent runtime injection policy is invalid")
     variant = document.get("sop_variant", "r0-baseline")
     if variant == "r1-evidence-first-bounded-v1":
+        if document["model_id"] != "openai/deepseek-v4-pro":
+            raise ContractValidationError("R1b reference model must remain frozen")
         if extra != _R1B_EXTRA:
             raise ContractValidationError("R1b reference profile has invalid fields")
         if document["command"] != ["python", "-m", "reference_driver"]:
@@ -82,6 +86,19 @@ def load_reference_agent_profile(
         digest = document["config_bundle_digest"]
         if not isinstance(digest, str) or len(digest) != 64:
             raise ContractValidationError("R1b config bundle digest is invalid")
+    elif variant == "r1c-structured-attribution-v1":
+        if document["model_id"] != "openai/glm-5.3-flash":
+            raise ContractValidationError("R1c reference model is invalid")
+        if extra != _R1C_EXTRA:
+            raise ContractValidationError("R1c reference profile has invalid fields")
+        if document["command"] != ["python", "-m", "reference_driver_r1c"]:
+            raise ContractValidationError("R1c reference command is invalid")
+        bounded = document["bounded_execution"]
+        if bounded != {"diagnosis_max_steps": 8, "mitigation_max_steps": 8, "container_timeout_seconds": 900}:
+            raise ContractValidationError("R1c bounded execution policy is invalid")
+        digest = document["config_bundle_digest"]
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise ContractValidationError("R1c config bundle digest is invalid")
     else:
         if extra and extra != {"sop_variant"}:
             raise ContractValidationError("reference agent profile has invalid fields")

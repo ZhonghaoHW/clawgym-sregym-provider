@@ -20,6 +20,7 @@ from clawgym_overlay.live_checks import (
     build_kubernetes_telemetry_snapshotter,
     delete_validation_network_policy,
     verify_filtered_kubernetes_access,
+    capture_oracle_attribution,
 )
 from clawgym_overlay.deployment_lock import deployment_lock_digest, load_deployment_lock
 from clawgym_overlay.locked_runtime import LockedRuntime
@@ -132,6 +133,7 @@ def execute(args: argparse.Namespace) -> None:
             ],
         ),
         access_verifier=verify_filtered_kubernetes_access,
+        attribution_capture=lambda phase: capture_oracle_attribution(conductor, phase),
     )
     if run_document.get("lane") == "agent_validation":
         profile = load_reference_agent_profile(

@@ -56,6 +56,102 @@ def _trajectory_records(root: Path) -> tuple[dict[str, object], ...]:
     return tuple(records)
 
 
+def _digest_document(document: dict[str, object], field: str) -> str:
+    payload = {key: value for key, value in document.items() if key != field}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+
+
+def _extract_r1c_handoff(records: tuple[dict[str, object], ...], run: RunManifest) -> dict[str, object]:
+    release_digest = getattr(getattr(run, "agent_release", None), "agent_release_digest", "")
+    required = ("symptom", "target_component", "evidence", "root_cause_hypothesis", "candidate_resource", "minimal_remediation", "verification_plan")
+    found = None
+    for record in records:
+        text = str(record.get("text", ""))
+        for line in reversed(text.splitlines()):
+            if "R1C_HANDOFF_JSON" not in line and "submit_tool" not in line:
+                continue
+            candidate = line.split("R1C_HANDOFF_JSON", 1)[-1].lstrip(" :")
+            try:
+                value = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict) and all(key in value for key in required):
+                found = value
+                break
+        if found:
+            break
+    if found is None:
+        document = {"schema_id": "clawgym.sregym_diagnosis_handoff.v1", "status": "incomplete", "run_manifest_digest": run.manifest_digest, "agent_release_digest": release_digest, "stage": "diagnosis", "symptom": "", "target_component": "", "evidence": [], "root_cause_hypothesis": "", "candidate_resource": {"kind": "", "namespace": "", "name": ""}, "minimal_remediation": "", "verification_plan": []}
+    else:
+        resource = found.get("candidate_resource") if isinstance(found.get("candidate_resource"), dict) else {}
+        document = {"schema_id": "clawgym.sregym_diagnosis_handoff.v1", "status": "complete", "run_manifest_digest": run.manifest_digest, "agent_release_digest": release_digest, "stage": "diagnosis", "symptom": str(found.get("symptom", "")), "target_component": str(found.get("target_component", "")), "evidence": found.get("evidence", []) if isinstance(found.get("evidence"), list) else [], "root_cause_hypothesis": str(found.get("root_cause_hypothesis", "")), "candidate_resource": {"kind": str(resource.get("kind", "")), "namespace": str(resource.get("namespace", "")), "name": str(resource.get("name", ""))}, "minimal_remediation": str(found.get("minimal_remediation", "")), "verification_plan": found.get("verification_plan", []) if isinstance(found.get("verification_plan"), list) else []}
+    document["handoff_digest"] = _digest_document(document, "handoff_digest")
+    return document
+
+
+def _extract_action_ledger(records: tuple[dict[str, object], ...], run: RunManifest) -> dict[str, object]:
+    release_digest = getattr(getattr(run, "agent_release", None), "agent_release_digest", "")
+    entries: list[dict[str, object]] = []
+    seen: set[str] = set()
+    sequence = 0
+    for record in records:
+        if not str(record.get("name", "")).endswith(".jsonl"):
+            continue
+        for line in str(record.get("text", "")).splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            messages = event.get("messages", event) if isinstance(event, dict) else {}
+            if not isinstance(messages, list):
+                continue
+            responses = {str(m.get("tool_call_id")): str(m.get("content", "")) for m in messages if isinstance(m, dict) and m.get("tool_call_id")}
+            for message in messages:
+                if not isinstance(message, dict):
+                    continue
+                for call in message.get("tool_calls", []) if isinstance(message.get("tool_calls"), list) else []:
+                    if not isinstance(call, dict):
+                        continue
+                    call_id = str(call.get("id", ""))
+                    if not call_id or call_id in seen:
+                        continue
+                    seen.add(call_id); sequence += 1
+                    tool = str(call.get("name", call.get("function", {}).get("name", "unknown")))
+                    args = call.get("args", call.get("function", {}).get("arguments", {}))
+                    if isinstance(args, str):
+                        try: args = json.loads(args)
+                        except json.JSONDecodeError: args = {}
+                    command = str(args.get("command", "")) if isinstance(args, dict) else ""
+                    lower = command.lower()
+                    if "submit_tool" in tool or tool in {"f_submit_tool", "manual_submit_tool"}:
+                        operation = "submit"
+                    elif lower.startswith("kubectl get") or lower.startswith("kubectl describe") or lower.startswith("kubectl logs") or lower.startswith("kubectl get"):
+                        operation = "read"
+                    elif any(lower.startswith("kubectl " + verb) for verb in ("apply", "patch", "delete", "replace", "create", "edit", "rollout", "scale", "set")):
+                        operation = "mutate"
+                    else:
+                        operation = "unknown"
+                    resource = {"kind": "", "namespace": "", "name": ""}
+                    match = re.search(r"(?:networkpolicy|netpol)\s+([A-Za-z0-9_.-]+)", lower)
+                    if match: resource["kind"], resource["name"] = "NetworkPolicy", match.group(1)
+                    ns = re.search(r"(?:-n|--namespace)\s+([A-Za-z0-9_.-]+)", lower)
+                    if ns: resource["namespace"] = ns.group(1)
+                    response = responses.get(call_id, "")
+                    if not response:
+                        outcome = "unknown"
+                    elif "command rejected" in response.lower() or "forbidden" in response.lower():
+                        outcome = "rejected"
+                    elif "error" in response.lower() or "exception" in response.lower():
+                        outcome = "failed"
+                    else:
+                        outcome = "executed"
+                    entries.append({"sequence": sequence, "stage": "mitigation" if "mitigation" in str(record.get("name", "")) else "diagnosis", "tool": tool, "operation": operation, "command_sha256": hashlib.sha256(command.encode()).hexdigest(), "resource": resource, "outcome": outcome})
+    summary = {"total": len(entries), "read": sum(e["operation"] == "read" for e in entries), "mutate": sum(e["operation"] == "mutate" for e in entries), "submit": sum(e["operation"] == "submit" for e in entries), "unknown": sum(e["operation"] == "unknown" for e in entries), "executed_mutations": sum(e["operation"] == "mutate" and e["outcome"] == "executed" for e in entries)}
+    document = {"schema_id": "clawgym.sregym_agent_action_ledger.v1", "run_manifest_digest": run.manifest_digest, "agent_release_digest": release_digest, "records": entries, "summary": summary}
+    document["ledger_digest"] = _digest_document(document, "ledger_digest")
+    return document
+
+
 class ReferenceAgentSecretError(ValueError):
     """Raised when the agent-only secret file is absent or unsafe."""
 
@@ -105,6 +201,26 @@ def _r1b_config_mounts(profile: dict) -> list[str]:
         mounts.append(f"{source.resolve()}:{item['container_path']}:ro")
     if len(mounts) != 2:
         raise RuntimeError("R1b configuration bundle is incomplete")
+    return mounts
+
+
+def _r1c_config_mounts(profile: dict) -> list[str]:
+    if profile.get("sop_variant") != "r1c-structured-attribution-v1":
+        return []
+    root = Path(__file__).resolve().parent / "manifests"
+    bundle_path = root / "agent.reference-stratus-r1c.config-bundle.v1.json"
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    expected = profile.get("config_bundle_digest")
+    actual = hashlib.sha256(json.dumps({k: v for k, v in bundle.items() if k != "bundle_digest"}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    if bundle.get("bundle_digest") != actual or expected != actual:
+        raise RuntimeError("R1c configuration bundle digest mismatch")
+    mounts = []
+    for item in bundle.get("files", []):
+        source = root / item["path"]
+        if not source.is_file() or source.is_symlink() or hashlib.sha256(source.read_bytes()).hexdigest() != item["sha256_digest"]:
+            raise RuntimeError("R1c configuration file digest mismatch")
+        mounts.append(f"{source.resolve()}:{item['container_path']}:ro")
+    if len(mounts) != 2: raise RuntimeError("R1c configuration bundle is incomplete")
     return mounts
 
 
@@ -166,6 +282,12 @@ class SafeStratusRunner:
                 ]
                 image_index = command.index(image_id)
                 command[image_index:image_index] = sum((['-v', mount] for mount in _r1b_config_mounts(self._profile)), [])
+            elif self._profile.get("sop_variant") == "r1c-structured-attribution-v1":
+                overlay = Path(__file__).resolve().parent / "reference_driver_r1c.py"
+                image_index = command.index(image_id)
+                command[image_index:image_index] = ["-v", f"{overlay.resolve()}:/opt/clawgym_overlay/reference_driver_r1c.py:ro", "-e", "PYTHONPATH=/opt/clawgym_overlay:/opt/sregym"]
+                image_index = command.index(image_id)
+                command[image_index:image_index] = sum((['-v', mount] for mount in _r1c_config_mounts(self._profile)), [])
             try:
                 completed = subprocess.run(
                     command, capture_output=True, text=False, timeout=timeout_seconds, check=False
@@ -189,4 +311,6 @@ class SafeStratusRunner:
             trajectory_records=trajectories,
             image_digest=image_id.removeprefix("sha256:"),
             timeout_seconds=timeout_seconds,
+            diagnosis_handoff=_extract_r1c_handoff(trajectories, run_manifest) if self._profile.get("sop_variant") == "r1c-structured-attribution-v1" else None,
+            action_ledger=_extract_action_ledger(trajectories, run_manifest) if self._profile.get("sop_variant") == "r1c-structured-attribution-v1" else None,
         )

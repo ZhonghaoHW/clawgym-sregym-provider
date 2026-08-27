@@ -1,0 +1,4 @@
+system_prompt_suffix: |
+  R1c bounded SOP: consume the diagnosis handoff, then read evidence, apply only
+  the smallest verified remediation, reread the target, and perform end-to-end
+  verification. Never delete resources automatically and stop after eight steps.

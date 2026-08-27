@@ -28,6 +28,8 @@ class ReferenceAgentExecution:
     trajectory_records: tuple[Mapping[str, Any], ...] = ()
     image_digest: str = ""
     timeout_seconds: int = 0
+    diagnosis_handoff: Mapping[str, Any] | None = None
+    action_ledger: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.exit_code < 0 or self.duration_ms < 0 or self.transcript_bytes < 0 or self.timeout_seconds < 0:
@@ -102,6 +104,16 @@ class SREGymReferenceAgentAdapter:
                     },
                 )
             )
+        if execution.diagnosis_handoff is not None:
+            evidence.append(EvidencePayload(
+                artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-diagnosis-handoff.json",
+                document=dict(execution.diagnosis_handoff),
+            ))
+        if execution.action_ledger is not None:
+            evidence.append(EvidencePayload(
+                artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-agent-action-ledger.json",
+                document=dict(execution.action_ledger),
+            ))
         return AgentInvocationResult(
             outcome=LifecycleOutcome(
                 phase="agent_invocation",

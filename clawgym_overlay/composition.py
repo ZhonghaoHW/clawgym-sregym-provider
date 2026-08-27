@@ -23,6 +23,7 @@ def build_sregym_bindings(
     snapshotter: Callable[[], Mapping[str, Any]],
     phase_probe: Callable[[str], Mapping[str, Any]] | None = None,
     access_verifier: Callable[[str], Mapping[str, Any]] | None = None,
+    attribution_capture: Callable[[str], Mapping[str, Any]] | None = None,
 ) -> tuple[ProviderBinding, ...]:
     digests = provider_configuration_digests(manifests)
     problem = manifests["problem"]
@@ -42,6 +43,7 @@ def build_sregym_bindings(
             conductor=conductor,
             immutable_configuration_digest=digests["sregym.oracle.v1"],
             required_stages=tuple(oracle["required_stages"]),
+            attribution_capture=(lambda run, phase: attribution_capture(phase)) if attribution_capture else None,
         ),
         SREGymToolAccessProvider(
             conductor=conductor,
@@ -82,6 +84,7 @@ def register_sregym_providers(
     snapshotter: Callable[[], Mapping[str, Any]],
     phase_probe: Callable[[str], Mapping[str, Any]] | None = None,
     access_verifier: Callable[[str], Mapping[str, Any]] | None = None,
+    attribution_capture: Callable[[str], Mapping[str, Any]] | None = None,
 ) -> tuple[ProviderBinding, ...]:
     bindings = build_sregym_bindings(
         conductor=conductor,
@@ -89,6 +92,7 @@ def register_sregym_providers(
         snapshotter=snapshotter,
         phase_probe=phase_probe,
         access_verifier=access_verifier,
+        attribution_capture=attribution_capture,
     )
     for binding in bindings:
         registry.register_binding(binding)

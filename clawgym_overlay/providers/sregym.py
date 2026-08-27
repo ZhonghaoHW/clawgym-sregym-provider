@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -64,6 +66,7 @@ def _outcome(
     completed_at: str,
     run: RunManifest,
     summary: Mapping[str, Any],
+    extra_evidence: tuple[EvidencePayload, ...] = (),
 ) -> LifecycleOutcome:
     return LifecycleOutcome(
         phase=phase,
@@ -82,7 +85,7 @@ def _outcome(
                     "summary": dict(summary),
                 },
             ),
-        ),
+        ) + extra_evidence,
     )
 
 
@@ -152,8 +155,15 @@ class SREGymOracleProvider:
     immutable_configuration_digest: str
     required_stages: tuple[str, ...]
     clock: Callable[[], str] = _utc_now
+    attribution_capture: Callable[[RunManifest, str], Mapping[str, Any]] | None = None
     provider_id: str = field(default="sregym.oracle.v1", init=False)
     provider_type: str = field(default="oracle_provider", init=False)
+
+    def _capture(self, run_manifest: RunManifest, phase: str) -> dict[str, Any]:
+        if self.attribution_capture is not None:
+            value = self.attribution_capture(run_manifest, phase)
+            return dict(value) if isinstance(value, Mapping) else {}
+        return {"captured_at": self.clock(), "conductor_stage": "unknown", "waiting_for_agent": self.conductor.waiting_for_agent, "policy_exists": False, "target_endpoint_ready": False}
 
     @staticmethod
     def _summarize(results: Mapping[str, Any], required_stages: tuple[str, ...]) -> dict[str, Any]:
@@ -176,6 +186,7 @@ class SREGymOracleProvider:
 
     def evaluate(self, run_manifest: RunManifest, submission: Any) -> OracleEvaluation:
         started_at = self.clock()
+        pre = self._capture(run_manifest, "pre_oracle")
         if self.conductor.waiting_for_agent:
             _run(self.conductor.submit(submission))
         results = _run(self.conductor.await_evaluation())
@@ -192,6 +203,17 @@ class SREGymOracleProvider:
             verdict = "fail"
             status = "succeeded"
         completed_at = self.clock()
+        post = self._capture(run_manifest, "post_oracle")
+        attribution = {
+            "schema_id": "clawgym.sregym_oracle_attribution.v1",
+            "run_manifest_digest": run_manifest.manifest_digest,
+            "environment_release_digest": run_manifest.environment_release.environment_release_digest,
+            "phase": "oracle",
+            "pre_oracle": pre,
+            "oracle_result": {"completed_at": completed_at, "verdict": verdict, "stage": getattr(self.conductor, "stage", "unknown"), "summary_digest": hashlib.sha256(json.dumps(summary, sort_keys=True, separators=(",", ":")).encode()).hexdigest()},
+            "post_oracle": post,
+        }
+        attribution["attribution_digest"] = hashlib.sha256(json.dumps(attribution, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         return OracleEvaluation(
             outcome=_outcome(
                 phase="oracle",
@@ -201,6 +223,7 @@ class SREGymOracleProvider:
                 completed_at=completed_at,
                 run=run_manifest,
                 summary={"required_stages": list(self.required_stages), "results": summary},
+                extra_evidence=(EvidencePayload(artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-oracle-attribution.json", document=attribution),),
             ),
             verdict=verdict,
         )

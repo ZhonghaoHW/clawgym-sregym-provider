@@ -13,6 +13,26 @@ from typing import Any
 from clawgym.contracts import sha256_digest
 
 
+def capture_oracle_attribution(conductor: Any, phase: str, clock: Callable[[], str] | None = None) -> Mapping[str, Any]:
+    """Read-only oracle boundary snapshot; never mutates cluster state."""
+    now = clock() if clock else datetime.now(UTC).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+    policy_exists = None
+    endpoint_ready = None
+    try:
+        conductor.current_problem.networking_v1.read_namespaced_network_policy("deny-all-recommendation", "hotel-reservation")
+        policy_exists = True
+    except Exception as exc:
+        if getattr(exc, "status", None) == 404:
+            policy_exists = False
+        else:
+            policy_exists = None
+    try:
+        endpoint_ready = bool(conductor.current_problem.mitigation_oracle._service_has_ready_target_endpoint())
+    except Exception:
+        endpoint_ready = None
+    return {"captured_at": now, "conductor_stage": str(getattr(conductor, "stage", "unknown")), "waiting_for_agent": bool(getattr(conductor, "waiting_for_agent", False)), "policy_exists": policy_exists, "target_endpoint_ready": endpoint_ready}
+
+
 @dataclass(slots=True)
 class SREGymLivePhaseProbe:
     """Prove the exact network-policy slice state after every lifecycle phase."""
