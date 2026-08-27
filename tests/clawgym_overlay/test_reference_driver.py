@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 from clawgym_overlay import reference_driver
 
@@ -17,3 +18,11 @@ def test_r1b_wrapper_normalizes_host_controlled_terminal(monkeypatch) -> None:
         )
     )
     assert result == "done"
+
+
+def test_r1b_summary_is_bounded_without_unbounded_llm_call() -> None:
+    state = SimpleNamespace(values={"messages": [f"message-{i}" for i in range(20)]})
+    summary = reference_driver._bounded_generate_run_summary(state, "ignored")
+    assert "message-12" in summary
+    assert "message-11" not in summary
+    assert len(summary) < 12000
