@@ -27,7 +27,9 @@ def capture_oracle_attribution(conductor: Any, phase: str, clock: Callable[[], s
         else:
             policy_exists = None
     try:
-        endpoint_ready = bool(conductor.current_problem.mitigation_oracle._service_has_ready_target_endpoint())
+        problem = conductor.current_problem
+        deployment = problem.kubectl.get_deployment(problem.faulty_service, problem.namespace)
+        endpoint_ready = bool(problem.mitigation_oracle._service_has_ready_target_endpoint(deployment))
     except Exception:
         endpoint_ready = None
     return {"captured_at": now, "conductor_stage": str(getattr(conductor, "stage", "unknown")), "waiting_for_agent": bool(getattr(conductor, "waiting_for_agent", False)), "policy_exists": policy_exists, "target_endpoint_ready": endpoint_ready}
