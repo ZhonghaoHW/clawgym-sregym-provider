@@ -23,15 +23,19 @@ _BASE_EXPECTED = {
     "runtime_variable",
 }
 
+_R1B_EXTRA = {"sop_variant", "bounded_execution", "config_bundle_digest"}
+
 
 def load_reference_agent_profile(
     manifest_root: str | Path, *, profile_digest: str | None = None
 ) -> dict[str, Any]:
     root = Path(manifest_root)
-    candidates = [root / "agent.reference-stratus.v1.json"]
-    r1 = root / "agent.reference-stratus-r1.v1.json"
-    if r1.is_file():
-        candidates.append(r1)
+    candidates = [
+        root / "agent.reference-stratus.v1.json",
+        root / "agent.reference-stratus-r1.v1.json",
+        root / "agent.reference-stratus-r1b.v1.json",
+    ]
+    candidates = [candidate for candidate in candidates if candidate.is_file()]
     path = next(
         (candidate for candidate in candidates if profile_digest is None or sha256_digest(json.loads(candidate.read_text(encoding="utf-8"))) == profile_digest),
         None,
@@ -42,8 +46,6 @@ def load_reference_agent_profile(
     if not isinstance(document, dict) or not _BASE_EXPECTED.issubset(document):
         raise ContractValidationError("reference agent profile has invalid fields")
     extra = set(document) - _BASE_EXPECTED
-    if extra and extra != {"sop_variant"}:
-        raise ContractValidationError("reference agent profile has invalid fields")
     reject_forbidden_content(document)
     if document["schema_id"] != "clawgym.sregym_reference_agent_profile.v1":
         raise ContractValidationError("reference agent profile has invalid schema_id")
@@ -59,13 +61,32 @@ def load_reference_agent_profile(
         raise ContractValidationError("reference agent model must remain frozen")
     if document["api_base"] != "https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1":
         raise ContractValidationError("reference agent endpoint must remain frozen")
-    if document["command"] != ["python", "-m", "clients.stratus.stratus_agent.driver.driver"]:
-        raise ContractValidationError("reference agent command must remain frozen")
     if (
         document["runtime_injection"] != "host-only-file"
         or document["runtime_variable"] != "AGENT_API_KEY"
     ):
         raise ContractValidationError("reference agent runtime injection policy is invalid")
-    if "sop_variant" in document and document["sop_variant"] != "r1-evidence-first":
-        raise ContractValidationError("reference agent profile variant is invalid")
+    variant = document.get("sop_variant", "r0-baseline")
+    if variant == "r1-evidence-first-bounded-v1":
+        if extra != _R1B_EXTRA:
+            raise ContractValidationError("R1b reference profile has invalid fields")
+        if document["command"] != ["python", "-m", "reference_driver"]:
+            raise ContractValidationError("R1b reference command is invalid")
+        bounded = document["bounded_execution"]
+        if bounded != {
+            "diagnosis_max_steps": 8,
+            "mitigation_max_steps": 8,
+            "container_timeout_seconds": 900,
+        }:
+            raise ContractValidationError("R1b bounded execution policy is invalid")
+        digest = document["config_bundle_digest"]
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise ContractValidationError("R1b config bundle digest is invalid")
+    else:
+        if extra and extra != {"sop_variant"}:
+            raise ContractValidationError("reference agent profile has invalid fields")
+        if document["command"] != ["python", "-m", "clients.stratus.stratus_agent.driver.driver"]:
+            raise ContractValidationError("reference agent command must remain frozen")
+        if variant not in {"r0-baseline", "r1-evidence-first"}:
+            raise ContractValidationError("reference agent profile variant is invalid")
     return document

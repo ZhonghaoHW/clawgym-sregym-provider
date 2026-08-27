@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import stat
@@ -75,6 +76,38 @@ def read_agent_secret(path: str | Path) -> str:
     return value
 
 
+def _r1b_config_mounts(profile: dict) -> list[str]:
+    """Resolve the fixed R1b config bundle without accepting caller paths."""
+
+    if profile.get("sop_variant") != "r1-evidence-first-bounded-v1":
+        return []
+    root = Path(__file__).resolve().parent / "manifests"
+    bundle_path = root / "agent.reference-stratus-r1b.config-bundle.v1.json"
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    expected = profile.get("config_bundle_digest")
+    actual = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in bundle.items() if key != "bundle_digest"},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    if bundle.get("bundle_digest") != actual or expected != actual:
+        raise RuntimeError("R1b configuration bundle digest mismatch")
+    mounts: list[str] = []
+    for item in bundle.get("files", []):
+        source = root / item["path"]
+        if not source.is_file() or source.is_symlink():
+            raise RuntimeError("R1b configuration file is unavailable")
+        if hashlib.sha256(source.read_bytes()).hexdigest() != item["sha256_digest"]:
+            raise RuntimeError("R1b configuration file digest mismatch")
+        mounts.append(f"{source.resolve()}:{item['container_path']}:ro")
+    if len(mounts) != 2:
+        raise RuntimeError("R1b configuration bundle is incomplete")
+    return mounts
+
+
 class SafeStratusRunner:
     """Run Stratus with only filtered Kubernetes access and one model credential."""
 
@@ -97,6 +130,9 @@ class SafeStratusRunner:
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
             raise RuntimeError("reference agent image does not have a local SHA-256 identity")
         command_profile = self._profile["command"]
+        timeout_seconds = self._profile.get("bounded_execution", {}).get(
+            "container_timeout_seconds", 1800
+        )
         started = time.monotonic()
         with tempfile.TemporaryDirectory(prefix="clawgym-wp5-agent-") as logs:
             command = [
@@ -121,14 +157,30 @@ class SafeStratusRunner:
                 image_id,
                 *command_profile[1:],
             ]
-            completed = subprocess.run(command, capture_output=True, text=False, timeout=1800, check=False)
-            transcript = completed.stdout + completed.stderr
+            if self._profile.get("sop_variant") == "r1-evidence-first-bounded-v1":
+                overlay = Path(__file__).resolve().parent / "reference_driver.py"
+                image_index = command.index(image_id)
+                command[image_index:image_index] = [
+                    "-v", f"{overlay.resolve()}:/opt/clawgym_overlay/reference_driver.py:ro",
+                    "-e", "PYTHONPATH=/opt/clawgym_overlay:/opt/sregym",
+                ]
+                image_index = command.index(image_id)
+                command[image_index:image_index] = sum((['-v', mount] for mount in _r1b_config_mounts(self._profile)), [])
+            try:
+                completed = subprocess.run(
+                    command, capture_output=True, text=False, timeout=timeout_seconds, check=False
+                )
+                transcript = completed.stdout + completed.stderr
+                exit_code = completed.returncode if completed.returncode >= 0 else 1
+            except subprocess.TimeoutExpired as exc:
+                transcript = (exc.stdout or b"") + (exc.stderr or b"") + b"\nreference-agent-timeout\n"
+                exit_code = 124
             digest = hashlib.sha256(transcript).hexdigest()
             size = len(transcript)
             trajectories = _trajectory_records(Path(logs))
         duration_ms = int((time.monotonic() - started) * 1000)
         return ReferenceAgentExecution(
-            exit_code=completed.returncode if completed.returncode >= 0 else 1,
+            exit_code=exit_code,
             submission={"reference_agent": "stratus", "run_manifest_digest": run_manifest.manifest_digest},
             duration_ms=duration_ms,
             transcript_digest=digest,
@@ -136,4 +188,5 @@ class SafeStratusRunner:
             transcript=_safe_text(transcript),
             trajectory_records=trajectories,
             image_digest=image_id.removeprefix("sha256:"),
+            timeout_seconds=timeout_seconds,
         )

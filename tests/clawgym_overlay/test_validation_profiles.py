@@ -52,3 +52,15 @@ def test_reference_r1_profile_is_explicitly_registered() -> None:
     )
     assert profile["sop_variant"] == "r1-evidence-first"
     assert profile["model_id"] == "openai/deepseek-v4-pro"
+
+
+def test_reference_r1b_profile_is_bounded_and_explicitly_registered() -> None:
+    profile = load_reference_agent_profile(
+        MANIFESTS,
+        profile_digest=sha256_digest(
+            json.loads((MANIFESTS / "agent.reference-stratus-r1b.v1.json").read_text())
+        ),
+    )
+    assert profile["sop_variant"] == "r1-evidence-first-bounded-v1"
+    assert profile["bounded_execution"]["diagnosis_max_steps"] == 8
+    assert profile["bounded_execution"]["container_timeout_seconds"] == 900

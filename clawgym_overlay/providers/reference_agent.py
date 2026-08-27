@@ -27,9 +27,10 @@ class ReferenceAgentExecution:
     transcript: str = ""
     trajectory_records: tuple[Mapping[str, Any], ...] = ()
     image_digest: str = ""
+    timeout_seconds: int = 0
 
     def __post_init__(self) -> None:
-        if self.exit_code < 0 or self.duration_ms < 0 or self.transcript_bytes < 0:
+        if self.exit_code < 0 or self.duration_ms < 0 or self.transcript_bytes < 0 or self.timeout_seconds < 0:
             raise ValueError("reference execution fields must be non-negative")
         if self.transcript_digest and len(self.transcript_digest) != 64:
             raise ValueError("reference transcript digest must be SHA-256")
@@ -68,6 +69,7 @@ class SREGymReferenceAgentAdapter:
             "exit_code": execution.exit_code,
             "transcript_sha256_digest": transcript_digest,
             "transcript_bytes": execution.transcript_bytes,
+            "container_timeout_seconds": execution.timeout_seconds,
         }
         evidence = [
             EvidencePayload(
