@@ -251,6 +251,9 @@ class SafeStratusRunner:
         )
         started = time.monotonic()
         with tempfile.TemporaryDirectory(prefix="clawgym-wp5-agent-") as logs:
+            env_file = Path(logs) / "agent.env"
+            env_file.write_text(f"AGENT_API_KEY={key}\n", encoding="utf-8")
+            env_file.chmod(0o600)
             command = [
                 "docker", "run", "--rm", "--network=host",
                 "--add-host=host.docker.internal:host-gateway", "--read-only",
@@ -264,7 +267,7 @@ class SafeStratusRunner:
                 "-e", "AGENT_LOGS_DIR=/logs",
                 "-e", f"AGENT_MODEL_ID={self._profile['model_id']}",
                 "-e", f"AGENT_API_BASE={self._profile['api_base']}",
-                "-e", f"AGENT_API_KEY={key}",
+                "--env-file", str(env_file),
                 "-e", f"SREGYM_ARTIFACT_ID={self._profile['artifact_id']}",
                 "-e", f"SREGYM_SOP_VARIANT={self._profile.get('sop_variant', 'r0-baseline')}",
                 "-e", "API_HOSTNAME=host.docker.internal",
