@@ -191,6 +191,18 @@ class LockedRuntime:
         config.workload_image = self.image_reference("runtime-image.workload")
 
     def configure_services(self, conductor: Any) -> None:
+        # The Prometheus chart packages dependencies as .tgz files during
+        # install.  Pin the kube-state-metrics repository explicitly so the
+        # chart's registry prefix is not duplicated when resolving the locked
+        # image target.
+        prometheus_args = conductor.prometheus.helm_configs.setdefault("extra_args", [])
+        if "kube-state-metrics.image.repository=kube-state-metrics/kube-state-metrics" not in prometheus_args:
+            prometheus_args.extend(
+                [
+                    "--set",
+                    "kube-state-metrics.image.repository=kube-state-metrics/kube-state-metrics",
+                ]
+            )
         conductor.loki.helm_configs.update(
             {
                 "chart_path": str(self.cached_artifact("loki-chart")),

@@ -31,9 +31,14 @@ def test_locked_runtime_configures_only_verified_assets_and_digest_images(tmp_pa
     assert config.workload_image.endswith("@sha256:" + "0" * 63 + "e")
 
     loki = SimpleNamespace(helm_configs={}, promtail_chart_path=None)
-    locked.configure_services(SimpleNamespace(loki=loki))
+    prometheus = SimpleNamespace(helm_configs={})
+    locked.configure_services(SimpleNamespace(loki=loki, prometheus=prometheus))
     assert loki.helm_configs["remote_chart"] is False
     assert loki.promtail_chart_path.endswith("promtail-chart")
+    assert prometheus.helm_configs["extra_args"] == [
+        "--set",
+        "kube-state-metrics.image.repository=kube-state-metrics/kube-state-metrics",
+    ]
 
     declared = {
         artifact["source"].removeprefix("oci://")
