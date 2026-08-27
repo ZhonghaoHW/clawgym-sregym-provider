@@ -205,7 +205,7 @@ def _r1b_config_mounts(profile: dict) -> list[str]:
 
 
 def _r1c_config_mounts(profile: dict) -> list[str]:
-    if profile.get("sop_variant") != "r1c-structured-attribution-v1":
+    if profile.get("sop_variant") not in {"r1c-structured-attribution-v1", "r1c-structured-attribution-deepseek-v1"}:
         return []
     root = Path(__file__).resolve().parent / "manifests"
     bundle_path = root / "agent.reference-stratus-r1c.config-bundle.v1.json"
@@ -282,7 +282,7 @@ class SafeStratusRunner:
                 ]
                 image_index = command.index(image_id)
                 command[image_index:image_index] = sum((['-v', mount] for mount in _r1b_config_mounts(self._profile)), [])
-            elif self._profile.get("sop_variant") == "r1c-structured-attribution-v1":
+            elif self._profile.get("sop_variant") in {"r1c-structured-attribution-v1", "r1c-structured-attribution-deepseek-v1"}:
                 overlay = Path(__file__).resolve().parent / "reference_driver_r1c.py"
                 image_index = command.index(image_id)
                 command[image_index:image_index] = ["-v", f"{overlay.resolve()}:/opt/clawgym_overlay/reference_driver_r1c.py:ro", "-e", "PYTHONPATH=/opt/clawgym_overlay:/opt/sregym"]
@@ -311,6 +311,6 @@ class SafeStratusRunner:
             trajectory_records=trajectories,
             image_digest=image_id.removeprefix("sha256:"),
             timeout_seconds=timeout_seconds,
-            diagnosis_handoff=_extract_r1c_handoff(trajectories, run_manifest) if self._profile.get("sop_variant") == "r1c-structured-attribution-v1" else None,
-            action_ledger=_extract_action_ledger(trajectories, run_manifest) if self._profile.get("sop_variant") == "r1c-structured-attribution-v1" else None,
+            diagnosis_handoff=_extract_r1c_handoff(trajectories, run_manifest) if self._profile.get("sop_variant") in {"r1c-structured-attribution-v1", "r1c-structured-attribution-deepseek-v1"} else None,
+            action_ledger=_extract_action_ledger(trajectories, run_manifest) if self._profile.get("sop_variant") in {"r1c-structured-attribution-v1", "r1c-structured-attribution-deepseek-v1"} else None,
         )
