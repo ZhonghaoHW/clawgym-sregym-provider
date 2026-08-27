@@ -204,10 +204,14 @@ class SREGymOracleProvider:
             status = "succeeded"
         completed_at = self.clock()
         post = self._capture(run_manifest, "post_oracle")
+        environment_release = getattr(run_manifest, "environment_release", None)
+        environment_release_digest = getattr(
+            environment_release, "environment_release_digest", ""
+        )
         attribution = {
             "schema_id": "clawgym.sregym_oracle_attribution.v1",
             "run_manifest_digest": run_manifest.manifest_digest,
-            "environment_release_digest": run_manifest.environment_release.environment_release_digest,
+            "environment_release_digest": environment_release_digest,
             "phase": "oracle",
             "pre_oracle": pre,
             "oracle_result": {"completed_at": completed_at, "verdict": verdict, "stage": getattr(self.conductor, "stage", "unknown"), "summary_digest": hashlib.sha256(json.dumps(summary, sort_keys=True, separators=(",", ":")).encode()).hexdigest()},
