@@ -1366,6 +1366,12 @@ kube-state-metrics:
   ##
   enabled: true
 
+  # Keep the application image aligned with the provider deployment lock even
+  # when Helm resolves the dependency chart from its repository.
+  image:
+    repository: registry.k8s.io/kube-state-metrics/kube-state-metrics
+    tag: v2.9.2
+
   nodeSelector:
     node-role.kubernetes.io/control-plane: ""
 
