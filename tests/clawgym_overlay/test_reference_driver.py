@@ -26,3 +26,16 @@ def test_r1b_summary_is_bounded_without_unbounded_llm_call() -> None:
     assert "message-12" in summary
     assert "message-11" not in summary
     assert len(summary) < 12000
+
+
+def test_r1b_force_submit_does_not_make_an_extra_llm_request(monkeypatch) -> None:
+    submitted: list[str] = []
+
+    async def submit(*, ans):
+        submitted.append(ans)
+
+    monkeypatch.setattr(reference_driver, "manual_submit_tool", submit)
+    agent = SimpleNamespace(max_step=8, logger=SimpleNamespace(warning=lambda *args: None))
+    result = asyncio.run(reference_driver._bounded_force_submit(agent, SimpleNamespace()))
+    assert submitted == ["R1b bounded diagnosis handoff"]
+    assert result["submitted"] is True

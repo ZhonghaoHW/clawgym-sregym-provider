@@ -10,9 +10,31 @@ from __future__ import annotations
 import asyncio
 
 from clients.stratus.stratus_agent.driver import driver
+from clients.stratus.stratus_agent.diagnosis_agent import DiagnosisAgent
+from clients.stratus.tools.submit_tool import manual_submit_tool
+from langchain_core.messages import HumanMessage
 
 
 _upstream_wait_for_stage_switch = driver.wait_for_stage_switch
+
+
+async def _bounded_force_submit(self, state):
+    """Submit a deterministic handoff when the bounded diagnosis budget ends.
+
+    The upstream ``BaseAgent.force_submit`` makes another LLM request to ask
+    for a tool call.  That request can block after the step budget is already
+    exhausted, leaving the conductor in ``mitigation`` forever.  R1b has a
+    host-controlled terminal boundary, so it submits a fixed marker directly
+    and lets the existing lifecycle/oracle decide the outcome.
+    """
+    self.logger.warning("Agent reached step limit (%s), using bounded direct submission.", self.max_step)
+    await manual_submit_tool(ans="R1b bounded diagnosis handoff")
+    return {
+        "submitted": True,
+        "messages": [HumanMessage("R1b bounded diagnosis handoff submitted.")],
+    }
+
+
 def _bounded_generate_run_summary(last_state, summary_system_prompt):
     """Keep the R1b handoff bounded without another unbounded LLM call.
 
@@ -40,6 +62,7 @@ async def _wait_for_host_controlled_terminal(**kwargs):
 
 
 def main() -> None:
+    DiagnosisAgent.force_submit = _bounded_force_submit
     driver.wait_for_stage_switch = _wait_for_host_controlled_terminal
     driver.generate_run_summary = _bounded_generate_run_summary
     asyncio.run(driver.main())
