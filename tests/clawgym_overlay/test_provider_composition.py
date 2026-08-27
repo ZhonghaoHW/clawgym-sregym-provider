@@ -311,6 +311,8 @@ def test_reference_adapter_requires_agent_validation_and_filtered_access() -> No
             duration_ms=12,
             transcript_digest="a" * 64,
             transcript_bytes=123,
+            transcript="agent output",
+            image_digest="b" * 64,
         ),
         clock=lambda: NOW,
     )
@@ -319,6 +321,7 @@ def test_reference_adapter_requires_agent_validation_and_filtered_access() -> No
     result = adapter.invoke(run, access)
     assert result.outcome.status == "succeeded"
     assert result.outcome.evidence[0].document["summary"]["transcript_bytes"] == 123
+    assert result.outcome.evidence[1].document["image_sha256_digest"] == "b" * 64
     with pytest.raises(RuntimeError, match="agent_validation"):
         adapter.invoke(SimpleNamespace(lane="evaluation", manifest_digest="a" * 64), access)
     with pytest.raises(RuntimeError, match="filtered"):

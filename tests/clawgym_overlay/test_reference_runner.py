@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from clawgym_overlay.reference_runner import ReferenceAgentSecretError, read_agent_secret
+from clawgym_overlay.reference_runner import (
+    ReferenceAgentSecretError,
+    _safe_text,
+    read_agent_secret,
+)
 
 
 def test_reference_secret_requires_private_regular_file(tmp_path: Path) -> None:
@@ -28,3 +32,11 @@ def test_reference_secret_rejects_empty_or_symlink(tmp_path: Path) -> None:
     linked.symlink_to(empty)
     with pytest.raises(ReferenceAgentSecretError, match="non-symlink"):
         read_agent_secret(linked)
+
+
+def test_safe_text_redacts_model_key_material_and_host_paths() -> None:
+    safe = _safe_text(b"Authorization: Bearer abcdefghijklmnop /var/run/example")
+    assert "abcdefghijklmnop" not in safe
+    assert "/var/run/example" not in safe
+    assert "[REDACTED]" in safe
+    assert "[HOST_PATH]" in safe

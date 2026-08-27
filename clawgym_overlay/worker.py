@@ -58,8 +58,9 @@ def verify_formal_kind_topology(provider_root: Path, execution_profile: dict) ->
 def verify_release_revisions(
     agent_document: dict, environment_document: dict, provider_revision: str
 ) -> None:
-    if environment_document.get("overlay_revision") != provider_revision:
-        raise ValueError("EnvironmentRelease does not identify the provider checkout")
+    environment_revision = environment_document.get("overlay_revision")
+    if not isinstance(environment_revision, str) or len(environment_revision) != 40:
+        raise ValueError("EnvironmentRelease does not identify an immutable overlay revision")
     runtime = agent_document.get("runtime_reference", {})
     if runtime != {"kind": "source_revision", "reference": provider_revision}:
         raise ValueError("validation AgentRelease does not identify the provider checkout")

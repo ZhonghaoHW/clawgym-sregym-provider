@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import os
+import re
 import stat
 import subprocess
 import tempfile
@@ -13,6 +13,39 @@ from pathlib import Path
 from clawgym.contracts import RunManifest
 
 from clawgym_overlay.providers.reference_agent import ReferenceAgentExecution
+
+
+_SENSITIVE_OUTPUT = re.compile(
+    r"(?i)(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}|"
+    r"(?:sk|ak)-[A-Za-z0-9_-]{12,}|"
+    r"\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b|"
+    r"-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|CERTIFICATE)-----"
+)
+
+
+def _safe_text(payload: bytes) -> str:
+    """Retain process evidence without persisting credentials or host paths."""
+
+    text = payload.decode("utf-8", errors="replace")
+    text = _SENSITIVE_OUTPUT.sub("[REDACTED]", text)
+    return re.sub(r"(?<![A-Za-z0-9_.-])/(?:[^\s\x00]+)", "[HOST_PATH]", text)
+
+
+def _trajectory_records(root: Path) -> tuple[dict[str, object], ...]:
+    records: list[dict[str, object]] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.is_symlink():
+            continue
+        payload = path.read_bytes()
+        records.append(
+            {
+                "name": path.relative_to(root).as_posix(),
+                "sha256_digest": hashlib.sha256(payload).hexdigest(),
+                "bytes": len(payload),
+                "text": _safe_text(payload),
+            }
+        )
+    return tuple(records)
 
 
 class ReferenceAgentSecretError(ValueError):
@@ -48,6 +81,14 @@ class SafeStratusRunner:
         if not kubeconfig.is_file() or kubeconfig.is_symlink():
             raise RuntimeError("filtered kubeconfig is unavailable")
         key = read_agent_secret(self._secret_file)
+        image_id = subprocess.run(
+            ["docker", "image", "inspect", self._image, "--format", "{{.Id}}"],
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout.strip()
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+            raise RuntimeError("reference agent image does not have a local SHA-256 identity")
         started = time.monotonic()
         with tempfile.TemporaryDirectory(prefix="clawgym-wp5-agent-") as logs:
             command = [
@@ -69,8 +110,10 @@ class SafeStratusRunner:
                 *self._profile["command"],
             ]
             completed = subprocess.run(command, capture_output=True, text=False, timeout=1800, check=False)
-            digest = hashlib.sha256(completed.stdout + completed.stderr).hexdigest()
-            size = len(completed.stdout) + len(completed.stderr)
+            transcript = completed.stdout + completed.stderr
+            digest = hashlib.sha256(transcript).hexdigest()
+            size = len(transcript)
+            trajectories = _trajectory_records(Path(logs))
         duration_ms = int((time.monotonic() - started) * 1000)
         return ReferenceAgentExecution(
             exit_code=completed.returncode if completed.returncode >= 0 else 1,
@@ -78,4 +121,7 @@ class SafeStratusRunner:
             duration_ms=duration_ms,
             transcript_digest=digest,
             transcript_bytes=size,
+            transcript=_safe_text(transcript),
+            trajectory_records=trajectories,
+            image_digest=image_id.removeprefix("sha256:"),
         )

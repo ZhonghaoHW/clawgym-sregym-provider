@@ -24,12 +24,17 @@ class ReferenceAgentExecution:
     currency: str = "USD"
     transcript_digest: str = ""
     transcript_bytes: int = 0
+    transcript: str = ""
+    trajectory_records: tuple[Mapping[str, Any], ...] = ()
+    image_digest: str = ""
 
     def __post_init__(self) -> None:
         if self.exit_code < 0 or self.duration_ms < 0 or self.transcript_bytes < 0:
             raise ValueError("reference execution fields must be non-negative")
         if self.transcript_digest and len(self.transcript_digest) != 64:
             raise ValueError("reference transcript digest must be SHA-256")
+        if self.image_digest and len(self.image_digest) != 64:
+            raise ValueError("reference image digest must be SHA-256")
 
 
 @dataclass(slots=True)
@@ -64,6 +69,37 @@ class SREGymReferenceAgentAdapter:
             "transcript_sha256_digest": transcript_digest,
             "transcript_bytes": execution.transcript_bytes,
         }
+        evidence = [
+            EvidencePayload(
+                artifact_key=f"runs/{run_manifest.manifest_digest}/reference-agent-invocation.json",
+                document={
+                    "schema_id": "clawgym.sregym_reference_agent_invocation.v1",
+                    "provider_id": self.provider_id,
+                    "status": status,
+                    "summary": dict(summary),
+                },
+            ),
+            EvidencePayload(
+                artifact_key=f"runs/{run_manifest.manifest_digest}/reference-agent-process.json",
+                document={
+                    "schema_id": "clawgym.sregym_reference_agent_process.v1",
+                    "image_sha256_digest": execution.image_digest,
+                    "transcript": execution.transcript,
+                    "transcript_sha256_digest": transcript_digest,
+                    "transcript_bytes": execution.transcript_bytes,
+                },
+            ),
+        ]
+        if execution.trajectory_records:
+            evidence.append(
+                EvidencePayload(
+                    artifact_key=f"runs/{run_manifest.manifest_digest}/reference-agent-trajectories.json",
+                    document={
+                        "schema_id": "clawgym.sregym_reference_agent_trajectories.v1",
+                        "records": list(execution.trajectory_records),
+                    },
+                )
+            )
         return AgentInvocationResult(
             outcome=LifecycleOutcome(
                 phase="agent_invocation",
@@ -71,17 +107,7 @@ class SREGymReferenceAgentAdapter:
                 status=status,
                 started_at=started_at,
                 completed_at=completed_at,
-                evidence=(
-                    EvidencePayload(
-                        artifact_key=f"runs/{run_manifest.manifest_digest}/reference-agent-invocation.json",
-                        document={
-                            "schema_id": "clawgym.sregym_reference_agent_invocation.v1",
-                            "provider_id": self.provider_id,
-                            "status": status,
-                            "summary": dict(summary),
-                        },
-                    ),
-                ),
+            evidence=tuple(evidence),
             ),
             submission=execution.submission,
             amount=execution.amount,
