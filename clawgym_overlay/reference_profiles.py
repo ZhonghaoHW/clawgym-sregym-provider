@@ -10,7 +10,7 @@ from clawgym.contracts import sha256_digest
 from clawgym.contracts.validation import ContractValidationError, reject_forbidden_content
 
 
-_EXPECTED = {
+_BASE_EXPECTED = {
     "schema_id",
     "adapter_id",
     "lane",
@@ -24,10 +24,25 @@ _EXPECTED = {
 }
 
 
-def load_reference_agent_profile(manifest_root: str | Path) -> dict[str, Any]:
-    path = Path(manifest_root) / "agent.reference-stratus.v1.json"
+def load_reference_agent_profile(
+    manifest_root: str | Path, *, profile_digest: str | None = None
+) -> dict[str, Any]:
+    root = Path(manifest_root)
+    candidates = [root / "agent.reference-stratus.v1.json"]
+    r1 = root / "agent.reference-stratus-r1.v1.json"
+    if r1.is_file():
+        candidates.append(r1)
+    path = next(
+        (candidate for candidate in candidates if profile_digest is None or sha256_digest(json.loads(candidate.read_text(encoding="utf-8"))) == profile_digest),
+        None,
+    )
+    if path is None:
+        raise ContractValidationError("reference agent profile digest is not registered")
     document = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(document, dict) or set(document) != _EXPECTED:
+    if not isinstance(document, dict) or not _BASE_EXPECTED.issubset(document):
+        raise ContractValidationError("reference agent profile has invalid fields")
+    extra = set(document) - _BASE_EXPECTED
+    if extra and extra != {"sop_variant"}:
         raise ContractValidationError("reference agent profile has invalid fields")
     reject_forbidden_content(document)
     if document["schema_id"] != "clawgym.sregym_reference_agent_profile.v1":
@@ -51,5 +66,6 @@ def load_reference_agent_profile(manifest_root: str | Path) -> dict[str, Any]:
         or document["runtime_variable"] != "AGENT_API_KEY"
     ):
         raise ContractValidationError("reference agent runtime injection policy is invalid")
-    sha256_digest(document)
+    if "sop_variant" in document and document["sop_variant"] != "r1-evidence-first":
+        raise ContractValidationError("reference agent profile variant is invalid")
     return document
