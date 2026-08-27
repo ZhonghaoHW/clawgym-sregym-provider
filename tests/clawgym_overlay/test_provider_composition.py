@@ -33,6 +33,7 @@ from clawgym_overlay.providers import (
     SREGymOracleProvider,
 )
 from clawgym_overlay.providers.sregym import _SREGymAccessHandle
+from clawgym_overlay.worker import verify_release_revisions
 from clawgym_overlay.release import build_environment_release, load_release_manifests
 
 
@@ -326,6 +327,20 @@ def test_reference_adapter_requires_agent_validation_and_filtered_access() -> No
         adapter.invoke(SimpleNamespace(lane="evaluation", manifest_digest="a" * 64), access)
     with pytest.raises(RuntimeError, match="filtered"):
         adapter.invoke(run, object())
+
+
+def test_reference_runtime_revision_is_independent_from_retained_environment_release() -> None:
+    verify_release_revisions(
+        {"runtime_reference": {"kind": "source_revision", "reference": "a" * 40}},
+        {"overlay_revision": "b" * 40},
+        "a" * 40,
+    )
+    with pytest.raises(ValueError, match="AgentRelease"):
+        verify_release_revisions(
+            {"runtime_reference": {"kind": "source_revision", "reference": "b" * 40}},
+            {"overlay_revision": "b" * 40},
+            "a" * 40,
+        )
 
 
 def test_causal_observation_provider_requires_complete_successful_transition() -> None:
