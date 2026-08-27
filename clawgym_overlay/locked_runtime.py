@@ -124,6 +124,16 @@ class LockedRuntime:
                     if not status.image_id:
                         continue
                     container_count += 1
+                    target = specifications.get(status.name)
+                    # Kind-bundled images are reported by containerd as a
+                    # bare manifest digest (``sha256:...``), while the lock
+                    # identifies them by their image target inside the
+                    # kindest/node image.  Prefer that explicit target
+                    # classification before treating a bare digest as a
+                    # normal registry image.
+                    if target in bundled_targets and status.image_id.startswith("sha256:"):
+                        observed_tokens.append(f"kind-bundled:{target}")
+                        continue
                     if "@sha256:" in status.image_id or status.image_id.startswith("sha256:"):
                         digest = self._image_digest(status.image_id)
                         if digest not in declared_digests:
@@ -132,7 +142,6 @@ class LockedRuntime:
                             )
                         observed_tokens.append(f"digest:{digest}")
                         continue
-                    target = specifications.get(status.name)
                     if target not in bundled_targets:
                         raise LockedRuntimeError(
                             "runtime contains an unrecognized image bundled in the Kind node"
