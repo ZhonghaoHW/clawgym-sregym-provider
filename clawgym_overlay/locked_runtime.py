@@ -105,6 +105,17 @@ class LockedRuntime:
             for artifact in self.document["artifacts"]
             if artifact["kind"] == "image" and artifact["name"].startswith("kind-bundled-image.")
         }
+
+        def is_bundled_target(target: str | None) -> bool:
+            if target in bundled_targets:
+                return True
+            # Kind's node image may expose amd64-qualified names for control
+            # plane components even though the lock records the canonical
+            # target without that platform suffix.
+            if target and "-amd64:" in target:
+                return target.replace("-amd64:", ":", 1) in bundled_targets
+            return False
+
         observed_tokens: list[str] = []
         container_count = 0
         for pod in pods:
@@ -131,7 +142,7 @@ class LockedRuntime:
                     # kindest/node image.  Prefer that explicit target
                     # classification before treating a bare digest as a
                     # normal registry image.
-                    if target in bundled_targets and status.image_id.startswith("sha256:"):
+                    if is_bundled_target(target) and status.image_id.startswith("sha256:"):
                         observed_tokens.append(f"kind-bundled:{target}")
                         continue
                     if "@sha256:" in status.image_id or status.image_id.startswith("sha256:"):
@@ -142,7 +153,7 @@ class LockedRuntime:
                             )
                         observed_tokens.append(f"digest:{digest}")
                         continue
-                    if target not in bundled_targets:
+                    if not is_bundled_target(target):
                         raise LockedRuntimeError(
                             "runtime contains an unrecognized image bundled in the Kind node"
                         )

@@ -129,3 +129,28 @@ def test_cluster_inventory_accepts_bare_containerd_sha256(tmp_path) -> None:
     core = SimpleNamespace(list_pod_for_all_namespaces=lambda: SimpleNamespace(items=[pod]))
     result = locked.cluster_image_inventory(SimpleNamespace(kubectl=SimpleNamespace(core_v1_api=core)))
     assert result["passed"] is True
+
+
+def test_cluster_inventory_accepts_kind_amd64_alias_for_bundled_image(tmp_path) -> None:
+    locked, document = runtime(tmp_path)
+    document["artifacts"].append(
+        {
+            "name": "kind-bundled-image.kube-apiserver",
+            "kind": "image",
+            "version": "v1",
+            "source": "oci://kindest/node@sha256:" + "1" * 64,
+            "integrity": "sha256:" + "1" * 64,
+            "target": "registry.k8s.io/kube-apiserver:v1",
+        }
+    )
+    status = SimpleNamespace(name="apiserver", image_id="sha256:" + "2" * 64)
+    pod = SimpleNamespace(
+        spec=SimpleNamespace(
+            init_containers=[],
+            containers=[SimpleNamespace(name="apiserver", image="registry.k8s.io/kube-apiserver-amd64:v1")],
+        ),
+        status=SimpleNamespace(init_container_statuses=[], container_statuses=[status]),
+    )
+    core = SimpleNamespace(list_pod_for_all_namespaces=lambda: SimpleNamespace(items=[pod]))
+    result = locked.cluster_image_inventory(SimpleNamespace(kubectl=SimpleNamespace(core_v1_api=core)))
+    assert result["passed"] is True
