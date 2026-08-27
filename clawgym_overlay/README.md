@@ -13,10 +13,17 @@ preserving its default upstream behavior. ClawGym consumes immutable provider
 commits through explicit registration; there is no plugin discovery, dynamic
 import, hot loading, or candidate-supplied executable code.
 
-WP3 does not run Kubernetes, Docker, telemetry services, or a real SREGym
-episode. It does not implement a ZeroClaw or reference-agent adapter and does
-not promote environment candidates. Those capabilities remain in later work
-packages.
+WP5 adds the explicitly composed `SREGymReferenceAgentAdapter` control lane.
+It freezes the Stratus invocation profile, accepts only `agent_validation`,
+requires the filtered SREGym access handle, and uses an agent-only host secret
+file. Its dedicated container path does not mount host credentials, an
+administrator kubeconfig, the Docker socket, or oracle access. The local fake
+and focused policy tests do not constitute a retained live baseline: a real
+three-run matrix, offline bundle verification, and remote cleanup evidence
+remain required before WP5 closure.
+
+This overlay still does not implement ZeroClaw, candidate search, environment
+evolution, automatic promotion, or an Evolution Lab integration.
 
 The pinned source identity is recorded in `upstream-baseline.json`. Reviewed
 upstream synchronization follows `docs/upstream-sync.md`.
