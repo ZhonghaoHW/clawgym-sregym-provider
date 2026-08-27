@@ -43,7 +43,9 @@
   },
   "controlled_root_changes": [
     "pyproject.toml",
-    "uv.lock"
+    "uv.lock",
+    ".gitignore",
+    "docs/wp5.6-r1c-operations.md"
   ],
   "core_patches": [
     {
@@ -102,6 +104,14 @@
         "tests/clawgym_overlay/test_k8s_proxy_filtering.py"
       ],
       "sha256": "45448198dfde28ad7ba4640572cdff95bb2d86d6d021d3222ab94565fbffd681"
+    },
+    {
+      "path": "sregym/observer/prometheus/prometheus/values.yaml",
+      "rationale": "clawgym_overlay/docs/core-patches/0002-locked-live-slice.md",
+      "tests": [
+        "tests/clawgym_overlay/test_deployment_lock.py"
+      ],
+      "sha256": "b79d9b0b87e3fdfe5f5a87689b1237aee7b02f5d9a381e4a9a84c06267b7d2ef"
     }
   ]
 }
