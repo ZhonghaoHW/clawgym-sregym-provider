@@ -74,4 +74,7 @@ def test_runner_replaces_shell_entrypoint_with_frozen_python_command(
     entrypoint = docker.index("--entrypoint")
     assert docker[entrypoint + 1] == "python"
     assert docker[-2:] == ["-m", "clients.stratus.stratus_agent.driver.driver"]
+    assert "--user" in docker
+    assert any(item.endswith(":/home/agent/.kube/config:ro") for item in docker)
+    assert "KUBECONFIG=/home/agent/.kube/config" in docker
     assert result.image_digest == "a" * 64

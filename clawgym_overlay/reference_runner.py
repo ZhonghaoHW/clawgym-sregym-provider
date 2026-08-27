@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import stat
 import subprocess
@@ -98,9 +99,10 @@ class SafeStratusRunner:
                 "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
                 "--cap-drop=ALL", "--security-opt=no-new-privileges",
                 "--cpus=4", "--memory=8g",
-                "-v", f"{kubeconfig.resolve()}:/root/.kube/config:ro",
+                "--user", f"{os.getuid()}:{os.getgid()}",
+                "-v", f"{kubeconfig.resolve()}:/home/agent/.kube/config:ro",
                 "-v", f"{Path(logs).resolve()}:/logs:rw",
-                "-e", "KUBECONFIG=/root/.kube/config",
+                "-e", "KUBECONFIG=/home/agent/.kube/config",
                 "-e", "AGENT_LOGS_DIR=/logs",
                 "-e", f"AGENT_MODEL_ID={self._profile['model_id']}",
                 "-e", f"AGENT_API_BASE={self._profile['api_base']}",
