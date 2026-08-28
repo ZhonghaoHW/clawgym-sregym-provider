@@ -15,6 +15,7 @@ from pathlib import Path
 from clawgym.contracts import RunManifest
 
 from clawgym_overlay.providers.reference_agent import ReferenceAgentExecution
+from clawgym_overlay.r1d_protocol import validate_handoff
 
 
 _SENSITIVE_OUTPUT = re.compile(
@@ -113,6 +114,12 @@ def _extract_r1d_handoff(records: tuple[dict[str, object], ...], run: RunManifes
         resource = found.get("candidate_resource") if isinstance(found.get("candidate_resource"), dict) else {}
         document = {"schema_id": "clawgym.sregym_diagnosis_handoff.v2", "status": "complete", "run_manifest_digest": run.manifest_digest, "agent_release_digest": release_digest, "stage": "diagnosis", "symptom": str(found.get("symptom", "")), "target_component": str(found.get("target_component", "")), "evidence": found.get("evidence", []), "root_cause_hypothesis": str(found.get("root_cause_hypothesis", "")), "candidate_resource": {"kind": str(resource.get("kind", "")), "namespace": str(resource.get("namespace", "")), "name": str(resource.get("name", ""))}, "minimal_remediation": str(found.get("minimal_remediation", "")), "verification_plan": found.get("verification_plan", [])}
     document["handoff_digest"] = _digest_document(document, "handoff_digest")
+    if document.get("status") == "complete":
+        try:
+            validate_handoff(document, run_manifest_digest=run.manifest_digest, agent_release_digest=release_digest)
+        except ValueError:
+            document["status"] = "incomplete"
+            document["handoff_digest"] = _digest_document(document, "handoff_digest")
     return document
 
 
