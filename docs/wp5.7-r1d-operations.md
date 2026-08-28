@@ -1,6 +1,8 @@
 # WP5.7 R1d Reference execution-protocol pilot
 
-**Status:** design and local implementation stage; remote execution prohibited
+**Status:** local implementation and replay gates complete; remote execution gated on ECS
+
+**Last verified:** 2026-08-28
 
 R1d is a new immutable Reference Agent release derived directly from frozen
 R0. R1c and its failed sentinel remain historical evidence and are not an R1d
@@ -25,6 +27,7 @@ mutation verb changes the EnvironmentRelease and is outside this pilot. No
 upstream SREGym file, ZeroClaw runtime, dynamic plugin or live cluster is
 modified by the local implementation stage.
 
-Local replay, fixture tests and fake-conductor tests are mandatory before an
-ECS sentinel. A future remote sentinel remains `same_family_provisional` and
-requires human review; it cannot authorize WP8.
+Local replay, fixture tests and fake-conductor tests are complete: the focused
+provider gate is green and historical R1c markers classify as incomplete. A
+future remote sentinel remains `same_family_provisional` and requires human
+review; it cannot authorize WP8.
