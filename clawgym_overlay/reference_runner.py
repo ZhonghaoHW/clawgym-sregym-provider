@@ -147,6 +147,7 @@ def _extract_action_ledger(records: tuple[dict[str, object], ...], run: RunManif
     entries: list[dict[str, object]] = []
     events: dict[str, dict[str, object]] = {}
     order: list[str] = []
+    pending_responses: dict[str, str] = {}
     for record in records:
         if not str(record.get("name", "")).endswith(".jsonl"):
             continue
@@ -190,11 +191,13 @@ def _extract_action_ledger(records: tuple[dict[str, object], ...], run: RunManif
                     if match: resource["kind"], resource["name"] = "NetworkPolicy", match.group(1)
                     ns = re.search(r"(?:-n|--namespace)\s+([A-Za-z0-9_.-]+)", lower)
                     if ns: resource["namespace"] = ns.group(1)
-                    events[call_id] = {"stage": "mitigation" if "mitigation" in str(record.get("name", "")) else "diagnosis", "tool": tool, "operation": operation, "command": command, "resource": resource, "response": ""}
+                    events[call_id] = {"stage": "mitigation" if "mitigation" in str(record.get("name", "")) else "diagnosis", "tool": tool, "operation": operation, "command": command, "resource": resource, "response": pending_responses.pop(call_id, "")}
                     order.append(call_id)
                 for call_id, response in responses.items():
                     if call_id in events:
                         events[call_id]["response"] = response
+                    else:
+                        pending_responses[call_id] = response
     for sequence, call_id in enumerate(order, 1):
         event = events[call_id]
         response = str(event.get("response", ""))
