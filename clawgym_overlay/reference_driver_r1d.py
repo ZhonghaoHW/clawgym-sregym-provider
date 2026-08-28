@@ -34,7 +34,9 @@ async def _wait_preserving_host_stage(**kwargs):
 def main() -> None:
     DiagnosisAgent.force_submit = _bounded_incomplete_submit
     driver.wait_for_stage_switch = _wait_preserving_host_stage
-    # The upstream summary is never used as a typed handoff by the host.
+    # Disable transcript-tail summaries: only the explicit R1D marker can
+    # become a handoff, and no extra LLM summarization request is made.
+    driver.generate_run_summary = lambda *_args, **_kwargs: "R1d structured evidence only; no transcript summary."
     asyncio.run(driver.main())
 
 
