@@ -46,6 +46,7 @@ def reduce_tool_events(events: Iterable[Mapping[str, Any]]) -> tuple[dict[str, A
     """Join tool calls/results across snapshots by ID, independent of order."""
     calls: dict[str, dict[str, Any]] = {}
     order: list[str] = []
+    pending_results: dict[str, str] = {}
     for snapshot in events:
         messages = snapshot.get("messages", snapshot)
         if not isinstance(messages, list):
@@ -76,11 +77,13 @@ def reduce_tool_events(events: Iterable[Mapping[str, Any]]) -> tuple[dict[str, A
                         operation = "mutate"
                     else:
                         operation = "unknown"
-                    calls[call_id] = {"id": call_id, "tool": str(call.get("name", call.get("function", {}).get("name", "unknown"))), "operation": operation, "command": command, "response": ""}
+                    calls[call_id] = {"id": call_id, "tool": str(call.get("name", call.get("function", {}).get("name", "unknown"))), "operation": operation, "command": command, "response": pending_results.pop(call_id, "")}
                     order.append(call_id)
             tool_call_id = message.get("tool_call_id")
             if tool_call_id and str(tool_call_id) in calls:
                 calls[str(tool_call_id)]["response"] = str(message.get("content", ""))
+            elif tool_call_id:
+                pending_results[str(tool_call_id)] = str(message.get("content", ""))
     result = []
     for sequence, call_id in enumerate(order, 1):
         item = calls[call_id]

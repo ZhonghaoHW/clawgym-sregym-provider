@@ -41,6 +41,7 @@ def test_tool_reducer_joins_result_arriving_in_later_snapshot() -> None:
     reduced = reduce_tool_events([call, result])
     assert reduced[0]["operation"] == "mutate"
     assert reduced[0]["outcome"] == "executed"
+    assert reduce_tool_events([result, call])[0]["outcome"] == "executed"
 
 
 def test_r1d_gate_requires_one_mutation_reread_and_verification() -> None:
