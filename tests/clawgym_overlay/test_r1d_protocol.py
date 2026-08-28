@@ -6,6 +6,7 @@ import json
 import pytest
 
 from clawgym_overlay.r1d_protocol import R1dGate, TARGET, reduce_tool_events, validate_handoff
+from clawgym_overlay.reference_runner import _extract_r1d_handoff
 
 
 def _handoff(run: str = "a" * 64, release: str = "b" * 64) -> dict:
@@ -48,3 +49,12 @@ def test_r1d_gate_requires_one_mutation_reread_and_verification() -> None:
     assert gate.may_submit
     with pytest.raises(ValueError):
         gate.record_mutation()
+
+
+def test_historical_r1c_marker_is_not_accepted_by_r1d_parser() -> None:
+    run = type("Run", (), {"manifest_digest": "a" * 64})()
+    parsed = _extract_r1d_handoff(
+        ({"name": "diagnosis.jsonl", "text": 'R1C_HANDOFF_JSON {"status":"complete"}'},), run
+    )
+    assert parsed["schema_id"] == "clawgym.sregym_diagnosis_handoff.v2"
+    assert parsed["status"] == "incomplete"
