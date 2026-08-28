@@ -15,6 +15,7 @@ from langchain_core.messages import HumanMessage
 
 
 _upstream_wait_for_stage_switch = driver.wait_for_stage_switch
+_r1d_handoff_validated = False
 
 
 async def _bounded_incomplete_submit(self, state):
@@ -24,9 +25,14 @@ async def _bounded_incomplete_submit(self, state):
 
 
 async def _wait_preserving_host_stage(**kwargs):
+    if not _r1d_handoff_validated:
+        # Fail closed: an unvalidated diagnosis cannot enter mitigation.
+        return "awaiting_cleanup"
+    targets = set(kwargs["target_stages"])
+    targets.add("awaiting_cleanup")
     return await _upstream_wait_for_stage_switch(
         current_stage=kwargs["current_stage"],
-        target_stages=set(kwargs["target_stages"]),
+        target_stages=targets,
         timeout=kwargs.get("timeout", 300),
         poll_interval=kwargs.get("poll_interval", 1.0),
     )
@@ -38,6 +44,7 @@ def main() -> None:
     # Disable transcript-tail summaries: only the explicit R1D marker can
     # become a handoff, and no extra LLM summarization request is made.
     def _handoff_projection(last_state, _prompt):
+        global _r1d_handoff_validated
         messages = getattr(last_state, "values", {}).get("messages", [])
         for message in messages if isinstance(messages, list) else []:
             if isinstance(message, dict):
@@ -51,7 +58,9 @@ def main() -> None:
             except json.JSONDecodeError:
                 continue
             if isinstance(payload, dict) and payload.get("status") == "complete":
+                _r1d_handoff_validated = True
                 return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        _r1d_handoff_validated = False
         return json.dumps({"status": "incomplete"}, sort_keys=True, separators=(",", ":"))
 
     driver.generate_run_summary = _handoff_projection
