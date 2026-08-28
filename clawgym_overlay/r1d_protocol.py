@@ -16,6 +16,7 @@ from typing import Any, Iterable, Mapping
 
 TARGET = {"kind": "NetworkPolicy", "namespace": "hotel-reservation", "name": "deny-all-recommendation"}
 HANDOFF_FIELDS = ("symptom", "target_component", "evidence", "root_cause_hypothesis", "candidate_resource", "minimal_remediation", "verification_plan")
+VALID_STAGES = {"diagnosis", "mitigation", "awaiting_cleanup", "done", "error"}
 
 
 def _digest(document: Mapping[str, Any], field: str) -> str:
@@ -126,3 +127,12 @@ class R1dGate:
     @property
     def may_submit(self) -> bool:
         return self.handoff_validated and self.preconditions_verified and self.mutation_count == 1 and self.reread_done and self.verification_done
+
+
+def conductor_transition(stage: str, *, handoff_validated: bool) -> str:
+    """Model the host stage seam used by the fake-conductor replay tests."""
+    if stage not in VALID_STAGES:
+        return "error"
+    if stage == "diagnosis":
+        return "mitigation" if handoff_validated else "awaiting_cleanup"
+    return stage

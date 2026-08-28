@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from clawgym_overlay.r1d_protocol import R1dGate, TARGET, reduce_tool_events, validate_handoff
+from clawgym_overlay.r1d_protocol import R1dGate, TARGET, conductor_transition, reduce_tool_events, validate_handoff
 from clawgym_overlay.reference_runner import _extract_r1d_handoff
 
 
@@ -58,3 +58,9 @@ def test_historical_r1c_marker_is_not_accepted_by_r1d_parser() -> None:
     )
     assert parsed["schema_id"] == "clawgym.sregym_diagnosis_handoff.v2"
     assert parsed["status"] == "incomplete"
+
+
+def test_fake_conductor_fail_closed_stage_transitions() -> None:
+    assert conductor_transition("diagnosis", handoff_validated=False) == "awaiting_cleanup"
+    assert conductor_transition("diagnosis", handoff_validated=True) == "mitigation"
+    assert conductor_transition("timeout", handoff_validated=True) == "error"
