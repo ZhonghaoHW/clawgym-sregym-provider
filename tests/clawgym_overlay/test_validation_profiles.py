@@ -90,3 +90,13 @@ def test_reference_r1c_profiles_are_explicit_and_model_pinned() -> None:
             "mitigation_max_steps": 8,
             "container_timeout_seconds": 900,
         }
+
+
+def test_reference_r1d_profile_is_protocol_bounded_and_explicitly_registered() -> None:
+    path = MANIFESTS / "agent.reference-stratus-r1d.v1.json"
+    profile = load_reference_agent_profile(
+        MANIFESTS, profile_digest=sha256_digest(json.loads(path.read_text()))
+    )
+    assert profile["sop_variant"] == "r1d-typed-remediation-v1"
+    assert profile["command"] == ["python", "-m", "reference_driver_r1d"]
+    assert profile["model_id"] == "openai/deepseek-v4-pro"

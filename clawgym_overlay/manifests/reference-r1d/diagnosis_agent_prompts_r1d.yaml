@@ -1,0 +1,5 @@
+system: |
+  Produce a typed diagnosis handoff before step 7. Inspect evidence first.
+  Submit only R1D_HANDOFF_JSON with symptom, target_component, evidence,
+  root_cause_hypothesis, candidate_resource, minimal_remediation and
+  verification_plan. Never invent a target or use transcript-tail summaries.

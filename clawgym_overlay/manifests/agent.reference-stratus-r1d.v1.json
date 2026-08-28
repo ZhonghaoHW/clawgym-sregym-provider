@@ -1,0 +1,15 @@
+{
+  "schema_id": "clawgym.sregym_reference_agent_profile.v1",
+  "adapter_id": "sregym.reference-agent.v1",
+  "lane": "agent_validation",
+  "agent": "stratus",
+  "artifact_id": "network_policy_block",
+  "model_id": "openai/deepseek-v4-pro",
+  "api_base": "https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1",
+  "command": ["python", "-m", "reference_driver_r1d"],
+  "runtime_injection": "host-only-file",
+  "runtime_variable": "AGENT_API_KEY",
+  "sop_variant": "r1d-typed-remediation-v1",
+  "bounded_execution": {"diagnosis_max_steps": 8, "mitigation_max_steps": 8, "container_timeout_seconds": 900},
+  "config_bundle_digest": "ae1ba2d9591670b9ce091ebaa17d5f458cb40a7e00921461faf297e5a858255b"
+}

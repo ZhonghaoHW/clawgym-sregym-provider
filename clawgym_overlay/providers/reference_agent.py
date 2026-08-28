@@ -30,6 +30,8 @@ class ReferenceAgentExecution:
     timeout_seconds: int = 0
     diagnosis_handoff: Mapping[str, Any] | None = None
     action_ledger: Mapping[str, Any] | None = None
+    remediation_transaction: Mapping[str, Any] | None = None
+    verification_observation: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.exit_code < 0 or self.duration_ms < 0 or self.transcript_bytes < 0 or self.timeout_seconds < 0:
@@ -110,9 +112,20 @@ class SREGymReferenceAgentAdapter:
                 document=dict(execution.diagnosis_handoff),
             ))
         if execution.action_ledger is not None:
+            ledger_name = "sregym-agent-action-ledger.v2.json" if execution.action_ledger.get("schema_id") == "clawgym.sregym_agent_action_ledger.v2" else "sregym-agent-action-ledger.json"
             evidence.append(EvidencePayload(
-                artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-agent-action-ledger.json",
+                artifact_key=f"runs/{run_manifest.manifest_digest}/{ledger_name}",
                 document=dict(execution.action_ledger),
+            ))
+        if execution.remediation_transaction is not None:
+            evidence.append(EvidencePayload(
+                artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-remediation-transaction.json",
+                document=dict(execution.remediation_transaction),
+            ))
+        if execution.verification_observation is not None:
+            evidence.append(EvidencePayload(
+                artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-verification-observation.json",
+                document=dict(execution.verification_observation),
             ))
         return AgentInvocationResult(
             outcome=LifecycleOutcome(
