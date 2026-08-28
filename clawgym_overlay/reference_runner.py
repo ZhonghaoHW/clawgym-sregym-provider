@@ -126,8 +126,19 @@ def _extract_r1d_handoff(records: tuple[dict[str, object], ...], run: RunManifes
 def _r1d_transaction(handoff: dict[str, object], ledger: dict[str, object], run: RunManifest) -> dict[str, object]:
     mutations = [item for item in ledger.get("records", []) if isinstance(item, dict) and item.get("operation") == "mutate"]
     target = handoff.get("candidate_resource", {})
-    document = {"schema_id": "clawgym.sregym_remediation_transaction.v1", "run_manifest_digest": run.manifest_digest, "agent_release_digest": getattr(getattr(run, "agent_release", None), "agent_release_digest", ""), "status": "executed" if mutations else "incomplete", "target": target, "preconditions": {"handoff_validated": handoff.get("status") == "complete"}, "mutation": mutations[0] if mutations else {}, "post_read": {},}
+    mutation_sequence = mutations[0].get("sequence", 0) if mutations else 0
+    post_read = {"observed": any(isinstance(item, dict) and item.get("operation") == "read" and item.get("sequence", 0) > mutation_sequence for item in ledger.get("records", []))}
+    document = {"schema_id": "clawgym.sregym_remediation_transaction.v1", "run_manifest_digest": run.manifest_digest, "agent_release_digest": getattr(getattr(run, "agent_release", None), "agent_release_digest", ""), "status": "executed" if mutations else "incomplete", "target": target, "intent": handoff.get("minimal_remediation", ""), "preconditions": {"handoff_validated": handoff.get("status") == "complete"}, "policy_decision": "allow" if handoff.get("status") == "complete" else "deny", "mutation": mutations[0] if mutations else {}, "post_read": post_read,}
     document["transaction_digest"] = _digest_document(document, "transaction_digest")
+    return document
+
+
+def _r1d_verification_observation(ledger: dict[str, object], run: RunManifest) -> dict[str, object]:
+    mutations = [item for item in ledger.get("records", []) if isinstance(item, dict) and item.get("operation") == "mutate"]
+    boundary = mutations[0].get("sequence", 0) if mutations else 0
+    observations = [{"sequence": item.get("sequence"), "operation": "read", "outcome": item.get("outcome")} for item in ledger.get("records", []) if isinstance(item, dict) and item.get("operation") == "read" and item.get("sequence", 0) > boundary]
+    document = {"schema_id": "clawgym.sregym_verification_observation.v1", "run_manifest_digest": run.manifest_digest, "agent_release_digest": getattr(getattr(run, "agent_release", None), "agent_release_digest", ""), "observations": observations}
+    document["observation_digest"] = _digest_document(document, "observation_digest")
     return document
 
 
@@ -398,4 +409,5 @@ class SafeStratusRunner:
             diagnosis_handoff=handoff,
             action_ledger=ledger,
             remediation_transaction=_r1d_transaction(handoff, ledger, run_manifest) if is_r1d and handoff is not None and ledger is not None else None,
+            verification_observation=_r1d_verification_observation(ledger, run_manifest) if is_r1d and ledger is not None else None,
         )
