@@ -110,3 +110,12 @@ def test_reference_r1f_profile_is_explicit_and_host_normalized() -> None:
     assert profile["sop_variant"] == "r1f-host-normalized-remediation-v1"
     assert profile["command"] == ["python", "-m", "reference_driver_r1f"]
     assert profile["bounded_execution"]["mitigation_max_steps"] == 8
+
+
+def test_reference_r1i_profile_is_explicit_and_journaled() -> None:
+    path = MANIFESTS / "agent.reference-stratus-r1i.v1.json"
+    profile = load_reference_agent_profile(
+        MANIFESTS, profile_digest=sha256_digest(json.loads(path.read_text()))
+    )
+    assert profile["sop_variant"] == "r1i-typed-handoff-journal-v1"
+    assert profile["command"] == ["python", "-m", "reference_driver_r1f"]

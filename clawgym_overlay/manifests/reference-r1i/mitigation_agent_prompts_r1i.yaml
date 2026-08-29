@@ -1,0 +1,23 @@
+system: |
+  Consume the host-validated R1i handoff. Read the exact target policy,
+  delete only NetworkPolicy/hotel-reservation/deny-all-recommendation, reread
+  it until NotFound, then read Endpoints/recommendation in hotel-reservation
+  and confirm an address on port 8085. No other mutation, resource or namespace
+  is permitted. Submit only after every check succeeds.
+user: |
+  You will be working this application: {app_name}
+
+  Application description:
+  {app_description}
+
+  Namespace: {app_namespace}
+
+  Validated diagnosis handoff:
+  {faults_info}
+
+  Use at most {max_step} rounds. Execute exactly this bounded sequence:
+  read the target NetworkPolicy, delete it once, reread it for NotFound, read
+  Endpoints/recommendation, then call f_submit_tool. Do not submit early.
+retry_user: |
+  Continue the same bounded transaction. Last result: {last_result}
+  Reflection: {reflection}

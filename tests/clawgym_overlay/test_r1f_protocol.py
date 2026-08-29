@@ -8,6 +8,7 @@ from langgraph.types import Command
 from clawgym_overlay.r1f_protocol import (
     R1fGate,
     TARGET,
+    endpoint_result_ready,
     handoff_from_trajectory_records,
     normalise_handoff_submission,
 )
@@ -132,6 +133,50 @@ def test_gate_requires_exact_single_delete_and_verification() -> None:
         stage="mitigation",
     )
     assert gate.may_submit
+
+
+def test_endpoint_ready_parser_accepts_sanitized_table_and_rejects_empty() -> None:
+    assert endpoint_result_ready("NAME ENDPOINTS\nrecommendation [REDACTED]:8085 1m")
+    assert not endpoint_result_ready("NAME ENDPOINTS\nrecommendation <none> 1m")
+
+
+def test_strict_gate_requires_post_mutation_order() -> None:
+    gate = R1fGate(handoff_validated=True, strict_postconditions=True)
+    assert gate.record(
+        "kubectl get networkpolicy deny-all-recommendation -n hotel-reservation",
+        "deny-all-recommendation",
+        stage="mitigation",
+    )
+    assert gate.record(
+        "kubectl get endpoints recommendation -n hotel-reservation",
+        "recommendation [REDACTED]:8085",
+        stage="mitigation",
+    )
+    assert not gate.may_submit
+    assert gate.record(
+        "kubectl delete networkpolicy deny-all-recommendation -n hotel-reservation",
+        "deleted",
+        stage="mitigation",
+    )
+    assert gate.record(
+        "kubectl get networkpolicy deny-all-recommendation -n hotel-reservation",
+        'NotFound: networkpolicy "deny-all-recommendation" not found',
+        stage="mitigation",
+    )
+    assert gate.record(
+        "kubectl get endpoints recommendation -n hotel-reservation",
+        "recommendation [REDACTED]:8085",
+        stage="mitigation",
+    )
+    assert gate.may_submit
+
+
+def test_gate_snapshot_is_identity_bound() -> None:
+    gate = R1fGate(handoff_validated=True, strict_postconditions=True)
+    snapshot = gate.snapshot(run_manifest_digest=RUN, agent_release_digest=RELEASE)
+    assert snapshot["schema_id"] == "clawgym.sregym_gate_event_journal.v1"
+    assert snapshot["state"]["may_submit"] is False
+    assert len(snapshot["journal_digest"]) == 64
 
 
 def test_runtime_submit_hook_normalises_without_triggering_conductor(monkeypatch) -> None:

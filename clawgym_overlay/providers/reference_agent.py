@@ -32,6 +32,7 @@ class ReferenceAgentExecution:
     action_ledger: Mapping[str, Any] | None = None
     remediation_transaction: Mapping[str, Any] | None = None
     verification_observation: Mapping[str, Any] | None = None
+    gate_event_journal: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.exit_code < 0 or self.duration_ms < 0 or self.transcript_bytes < 0 or self.timeout_seconds < 0:
@@ -138,6 +139,11 @@ class SREGymReferenceAgentAdapter:
             evidence.append(EvidencePayload(
                 artifact_key=f"runs/{run_manifest.manifest_digest}/{verification_name}",
                 document=dict(execution.verification_observation),
+            ))
+        if execution.gate_event_journal is not None:
+            evidence.append(EvidencePayload(
+                artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-gate-event-journal.json",
+                document=dict(execution.gate_event_journal),
             ))
         return AgentInvocationResult(
             outcome=LifecycleOutcome(

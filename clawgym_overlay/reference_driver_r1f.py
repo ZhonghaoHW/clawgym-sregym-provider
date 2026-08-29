@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 
 from clients.stratus.stratus_agent.diagnosis_agent import DiagnosisAgent
 from clients.stratus.stratus_agent.driver import driver
@@ -17,7 +18,7 @@ from clawgym_overlay.r1f_protocol import (
     normalise_handoff_submission,
     parse_command,
 )
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
 from langgraph.types import Command
 
 
@@ -30,6 +31,10 @@ _original_diagnosis_submit = None
 _original_mitigation_submit = None
 
 
+def _legacy_incomplete_submit(self, state):
+    return {"submitted": True, "messages": [HumanMessage("R1f incomplete handoff submitted.")]}
+
+
 def _identities() -> tuple[str, str]:
     return os.getenv("SREGYM_RUN_MANIFEST_DIGEST", ""), os.getenv(
         "SREGYM_AGENT_RELEASE_DIGEST", ""
@@ -40,9 +45,47 @@ def _canonical_text(document: dict[str, object]) -> str:
     return f"{MARKER} " + json.dumps(document, sort_keys=True, separators=(",", ":"))
 
 
-async def _incomplete_submit(self, state):
+async def _bounded_force_submit(self, state):
+    """Use one bounded, typed finalization turn at the diagnosis budget.
+
+    The upstream force-submit path may fall back to a second free-form answer,
+    while the previous R1f wrapper immediately wrote an incomplete marker.  A
+    single finalization call gives the agent a chance to publish the diagnosis
+    it already established, without asking for a transcript summary or
+    inventing any semantic field on the host.
+    """
+
+    global _handoff
     run_digest, release_digest = _identities()
-    return {"submitted": True, "messages": [HumanMessage("R1f incomplete handoff submitted.")]}
+    prompt = HumanMessage(
+        "Finalization phase: publish exactly one R1F_HANDOFF_JSON object now. "
+        "Do not call a read or mutation tool. If you cannot provide every "
+        "required field, fail closed rather than inventing evidence."
+    )
+    response = self.llm.inference(messages=state["messages"] + [prompt], tools=[self.submit_tool])
+    answer = None
+    if isinstance(response, AIMessage) and response.tool_calls:
+        call = response.tool_calls[0]
+        if call.get("name") == self.submit_tool.name:
+            args = call.get("args", {})
+            if isinstance(args, dict) and isinstance(args.get("ans"), str):
+                answer = args["ans"]
+    document = (
+        normalise_handoff_submission(
+            answer, run_manifest_digest=run_digest, agent_release_digest=release_digest
+        )
+        if answer is not None
+        else None
+    )
+    if document is not None:
+        _handoff = document
+        _gate.handoff_validated = True
+        _gate.events.append({"event": "HANDOFF_VALIDATED", "handoff_digest": document["handoff_digest"]})
+        message = "R1f finalization accepted; continue to mitigation."
+    else:
+        _handoff = None
+        message = "R1f finalization incomplete; failing closed."
+    return {"submitted": True, "messages": [prompt, ToolMessage(content=message, tool_call_id="r1f-force-submit")]}
 
 
 async def _gated_diagnosis_submit(ans: str, state, tool_call_id: str) -> Command:
@@ -70,6 +113,7 @@ async def _gated_diagnosis_submit(ans: str, state, tool_call_id: str) -> Command
         })
     _handoff = document
     _gate.handoff_validated = True
+    _gate.events.append({"event": "HANDOFF_VALIDATED", "handoff_digest": document["handoff_digest"]})
     # Diagnosis handoff is an adapter-internal event.  Calling the upstream
     # submit tool here would trigger the single-stage SREGym Oracle before the
     # mitigation agent can execute its gated mutation and verification.  Mark
@@ -94,6 +138,25 @@ def _handoff_projection(_last_state, _prompt):
     )
 
 
+def _write_gate_journal() -> None:
+    """Persist the live gate state as the sole offline transaction source."""
+
+    logs = Path(os.getenv("AGENT_LOGS_DIR", "."))
+    logs.mkdir(parents=True, exist_ok=True)
+    run_digest, release_digest = _identities()
+    (logs / "r1f-gate-event-journal.json").write_text(
+        json.dumps(
+            _gate.snapshot(
+                run_manifest_digest=run_digest,
+                agent_release_digest=release_digest,
+            ),
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+
+
 async def _gated_kubectl(self, command: str, tool_call_id: str) -> Command:
     operation, _resource, _tokens = parse_command(command)
     if operation == "mutate" and not _gate.permits_mutation(command, stage=_stage):
@@ -114,7 +177,9 @@ async def _gated_submit(ans: str, tool_call_id: str) -> Command:
         return Command(update={"messages": [ToolMessage(
             content="Submission Rejected: R1f verification gate incomplete", tool_call_id=tool_call_id
         )]})
-    return await _original_mitigation_submit(ans=ans, tool_call_id=tool_call_id)
+    result = await _original_mitigation_submit(ans=ans, tool_call_id=tool_call_id)
+    _gate.events.append({"event": "FINAL_SUBMISSION_ACCEPTED", "tool_call_id": tool_call_id})
+    return result
 
 
 async def _wait(**kwargs):
@@ -135,11 +200,12 @@ async def _wait(**kwargs):
 def main() -> None:
     global _gate, _handoff, _stage, _handoff_rejections
     global _original_diagnosis_submit, _original_mitigation_submit
-    _gate = R1fGate()
+    is_r1i = os.getenv("SREGYM_SOP_VARIANT") == "r1i-typed-handoff-journal-v1"
+    _gate = R1fGate(strict_postconditions=is_r1i)
     _handoff = None
     _stage = "diagnosis"
     _handoff_rejections = 0
-    DiagnosisAgent.force_submit = _incomplete_submit
+    DiagnosisAgent.force_submit = _bounded_force_submit if is_r1i else _legacy_incomplete_submit
     driver.wait_for_stage_switch = _wait
     driver.generate_run_summary = _handoff_projection
     _original_diagnosis_submit = submit_tool.coroutine
@@ -148,7 +214,11 @@ def main() -> None:
     ExecKubectlCmdSafely._arun = _gated_kubectl
     _original_mitigation_submit = fake_submit_tool.coroutine
     fake_submit_tool.coroutine = _gated_submit
-    asyncio.run(driver.main())
+    try:
+        asyncio.run(driver.main())
+    finally:
+        if is_r1i:
+            _write_gate_journal()
 
 
 if __name__ == "__main__":

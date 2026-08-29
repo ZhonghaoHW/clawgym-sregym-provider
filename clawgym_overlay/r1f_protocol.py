@@ -87,6 +87,22 @@ def _normalise_evidence_list(value: object) -> list[str] | None:
     return items if len(items) == len(value) and items else None
 
 
+def endpoint_result_ready(result: str) -> bool:
+    """Recognise a ready recommendation endpoint without trusting prose.
+
+    Stratus output is sanitised before it is retained, so the address may be
+    ``[REDACTED]:8085`` or a normal cluster IP.  Merely looking for the word
+    ``ready`` (or accepting any non-empty response) caused the runtime gate and
+    the offline ledger to disagree.  The fixed service/port is the only
+    endpoint accepted by this profile.
+    """
+
+    lower = result.lower()
+    if any(marker in lower for marker in ("<none>", "not ready", "no addresses", "no endpoints")):
+        return False
+    return bool(re.search(r"(?:\[redacted\]|[0-9a-f:.]+):8085\b", lower))
+
+
 def normalise_handoff_submission(
     submission: str,
     *,
@@ -253,6 +269,28 @@ class R1fGate:
     target_reread: bool = False
     endpoint_ready: bool = False
     events: list[dict[str, object]] = field(default_factory=list)
+    strict_postconditions: bool = False
+
+    def snapshot(self, *, run_manifest_digest: str, agent_release_digest: str) -> dict[str, object]:
+        """Return the canonical runtime state used by offline evidence."""
+
+        document: dict[str, object] = {
+            "schema_id": "clawgym.sregym_gate_event_journal.v1",
+            "run_manifest_digest": run_manifest_digest,
+            "agent_release_digest": agent_release_digest,
+            "state": {
+                "handoff_validated": self.handoff_validated,
+                "precondition_read": self.precondition_read,
+                "mutation_count": self.mutation_count,
+                "mutation_executed": self.mutation_executed,
+                "target_reread": self.target_reread,
+                "endpoint_ready": self.endpoint_ready,
+                "may_submit": self.may_submit,
+            },
+            "events": list(self.events),
+        }
+        document["journal_digest"] = _digest(document, "journal_digest")
+        return document
 
     def permits_mutation(self, command: str, *, stage: str) -> bool:
         operation, resource, tokens = parse_command(command)
@@ -282,7 +320,14 @@ class R1fGate:
                 "namespace": "hotel-reservation",
                 "name": "recommendation",
             }:
-                self.endpoint_ready = "<none>" not in lower and "not ready" not in lower
+                # Endpoint readiness is valid only after the target has been
+                # reread absent; a pre-mutation endpoint check cannot satisfy
+                # the transaction postcondition.
+                self.endpoint_ready = (
+                    self.target_reread and endpoint_result_ready(result)
+                    if self.strict_postconditions
+                    else "<none>" not in lower and "not ready" not in lower
+                )
                 allowed = True
             else:
                 allowed = True
