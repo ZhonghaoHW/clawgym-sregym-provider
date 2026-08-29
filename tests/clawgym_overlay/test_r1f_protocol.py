@@ -138,7 +138,10 @@ def test_gate_requires_exact_single_delete_and_verification() -> None:
 
 def test_endpoint_ready_parser_accepts_sanitized_table_and_rejects_empty() -> None:
     assert endpoint_result_ready("NAME ENDPOINTS\nrecommendation [REDACTED]:8085 1m")
+    assert endpoint_result_ready("NAME ENDPOINTS PORTS\nrecommendation [REDACTED] 8085/TCP")
+    assert endpoint_result_ready("addresses: 10.244.0.10\nports:\n- port: 8085\n  protocol: TCP")
     assert not endpoint_result_ready("NAME ENDPOINTS\nrecommendation <none> 1m")
+    assert not endpoint_result_ready("ports: 8085/TCP")
 
 
 def test_strict_gate_requires_post_mutation_order() -> None:

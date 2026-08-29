@@ -100,7 +100,17 @@ def endpoint_result_ready(result: str) -> bool:
     lower = result.lower()
     if any(marker in lower for marker in ("<none>", "not ready", "no addresses", "no endpoints")):
         return False
-    return bool(re.search(r"(?:\[redacted\]|[0-9a-f:.]+):8085\b", lower))
+    # ``kubectl get endpoints`` emits either a compact table address
+    # (``10.244.0.10:8085``) or separate address/port columns
+    # (``10.244.0.10  8085/TCP``).  Accept both representations, including
+    # the sanitised ``[REDACTED]`` address, while still requiring an address
+    # and the fixed recommendation port.  A bare ``8085`` is insufficient:
+    # it could be the port field of an endpoint object with no ready address.
+    has_address = "[redacted]" in lower or bool(
+        re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", lower)
+    )
+    has_port = bool(re.search(r"(?:[:\s])8085(?:/tcp|\b)", lower))
+    return has_address and has_port
 
 
 def normalise_handoff_submission(
