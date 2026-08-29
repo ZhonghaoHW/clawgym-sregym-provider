@@ -158,10 +158,29 @@ def _extract_r1e_handoff(records: tuple[dict[str, object], ...], run: RunManifes
 def _extract_r1f_handoff(records: tuple[dict[str, object], ...], run: RunManifest) -> dict[str, object]:
     """Replay the same structured tool-call normalization used by R1f runtime."""
 
+    run_digest = run.manifest_digest
+    release_digest = getattr(getattr(run, "agent_release", None), "agent_release_digest", "")
+    for record in records:
+        if str(record.get("name", "")) != "r1f-handoff.json":
+            continue
+        try:
+            document = json.loads(str(record.get("text", "")))
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(document, dict)
+            and document.get("schema_id") == "clawgym.sregym_diagnosis_handoff.v2"
+            and document.get("status") == "complete"
+            and document.get("run_manifest_digest") == run_digest
+            and document.get("agent_release_digest") == release_digest
+            and document.get("handoff_digest") == _digest_document(document, "handoff_digest")
+        ):
+            return document
+
     return handoff_from_trajectory_records(
         records,
-        run_manifest_digest=run.manifest_digest,
-        agent_release_digest=getattr(getattr(run, "agent_release", None), "agent_release_digest", ""),
+        run_manifest_digest=run_digest,
+        agent_release_digest=release_digest,
     )
 
 

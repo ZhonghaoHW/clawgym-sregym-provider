@@ -55,6 +55,16 @@ def _r1i_normalise_submission(answer: str, *, run_digest: str, release_digest: s
     )
 
 
+def _write_handoff_artifact(document: dict[str, object]) -> None:
+    """Persist the accepted host-bound handoff as an explicit receipt input."""
+
+    logs = os.getenv("AGENT_LOGS_DIR")
+    if not logs:
+        return
+    path = Path(logs) / "r1f-handoff.json"
+    path.write_text(json.dumps(document, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+
+
 async def _bounded_force_submit(self, state):
     """Use one bounded, typed finalization turn at the diagnosis budget.
 
@@ -87,6 +97,7 @@ async def _bounded_force_submit(self, state):
     )
     if document is not None:
         _handoff = document
+        _write_handoff_artifact(document)
         _gate.handoff_validated = True
         _gate.events.append({"event": "HANDOFF_VALIDATED", "handoff_digest": document["handoff_digest"]})
         message = "R1f finalization accepted; continue to mitigation."
@@ -172,6 +183,7 @@ async def _gated_diagnosis_submit(ans: str, state, tool_call_id: str) -> Command
             )],
         })
     _handoff = document
+    _write_handoff_artifact(document)
     _gate.handoff_validated = True
     _gate.events.append({"event": "HANDOFF_VALIDATED", "handoff_digest": document["handoff_digest"]})
     # Diagnosis handoff is an adapter-internal event.  Calling the upstream
