@@ -20,6 +20,7 @@ _gate = R1eGate()
 _handoff_validated = False
 _stage = "diagnosis"
 _upstream_wait = driver.wait_for_stage_switch
+_original_submit_coroutine = None
 
 
 def _digest(document: dict[str, object], field: str) -> str:
@@ -85,7 +86,7 @@ async def _gated_kubectl(self, command: str, tool_call_id: str) -> Command:
 async def _gated_submit(ans: str, tool_call_id: str) -> Command:
     if not _gate.may_submit:
         return Command(update={"messages": [ToolMessage(content="Submission Rejected: R1e verification gate incomplete", tool_call_id=tool_call_id)]})
-    return await fake_submit_tool._r1e_original_coroutine(ans=ans, tool_call_id=tool_call_id)
+    return await _original_submit_coroutine(ans=ans, tool_call_id=tool_call_id)
 
 
 async def _wait(**kwargs):
@@ -97,14 +98,14 @@ async def _wait(**kwargs):
 
 
 def main() -> None:
-    global _stage
+    global _stage, _original_submit_coroutine
     _stage = "diagnosis"
     DiagnosisAgent.force_submit = _incomplete_submit
     driver.wait_for_stage_switch = _wait
     driver.generate_run_summary = _handoff_projection
     ExecKubectlCmdSafely._r1e_original_arun = ExecKubectlCmdSafely._arun
     ExecKubectlCmdSafely._arun = _gated_kubectl
-    fake_submit_tool._r1e_original_coroutine = fake_submit_tool.coroutine
+    _original_submit_coroutine = fake_submit_tool.coroutine
     fake_submit_tool.coroutine = _gated_submit
     asyncio.run(driver.main())
 
