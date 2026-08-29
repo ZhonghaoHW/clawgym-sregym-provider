@@ -29,6 +29,7 @@ _handoff_rejections = 0
 _upstream_wait = driver.wait_for_stage_switch
 _original_diagnosis_submit = None
 _original_mitigation_submit = None
+_original_diagnosis_call_model = None
 
 
 def _legacy_incomplete_submit(self, state):
@@ -86,6 +87,53 @@ async def _bounded_force_submit(self, state):
         _handoff = None
         message = "R1f finalization incomplete; failing closed."
     return {"submitted": True, "messages": [prompt, ToolMessage(content=message, tool_call_id="r1f-force-submit")]}
+
+
+def _r1i_call_model(self, state):
+    """Turn a valid structured final answer into the explicit submit call.
+
+    Some OpenAI-compatible backends return the handoff as a final structured
+    text block even when the tool list contains ``submit_tool``.  The upstream
+    graph treats a text-only answer as END, so the host would never reach the
+    diagnosis submit boundary.  We preserve the model text and add one
+    synthetic, identity-checked tool call; the normal gated submit path then
+    performs all validation and stage transition.  Invalid text is untouched
+    and still fails closed.
+    """
+
+    result = _original_diagnosis_call_model(self, state)
+    messages = result.get("messages", []) if isinstance(result, dict) else []
+    if not messages:
+        return result
+    answer = messages[-1]
+    if not isinstance(answer, AIMessage) or answer.tool_calls:
+        return result
+    content = answer.content
+    if isinstance(content, list):
+        content = "\n".join(
+            item.get("text", "")
+            for item in content
+            if isinstance(item, dict) and isinstance(item.get("text"), str)
+        )
+    if not isinstance(content, str):
+        return result
+    run_digest, release_digest = _identities()
+    if normalise_handoff_submission(
+        content, run_manifest_digest=run_digest, agent_release_digest=release_digest
+    ) is None:
+        return result
+    synthetic = AIMessage(
+        content=answer.content,
+        tool_calls=[
+            {
+                "name": self.submit_tool.name,
+                "args": {"ans": content},
+                "id": "r1i-structured-submit",
+                "type": "tool_call",
+            }
+        ],
+    )
+    return {**result, "messages": [*messages[:-1], synthetic]}
 
 
 async def _gated_diagnosis_submit(ans: str, state, tool_call_id: str) -> Command:
@@ -199,13 +247,16 @@ async def _wait(**kwargs):
 
 def main() -> None:
     global _gate, _handoff, _stage, _handoff_rejections
-    global _original_diagnosis_submit, _original_mitigation_submit
+    global _original_diagnosis_submit, _original_mitigation_submit, _original_diagnosis_call_model
     is_r1i = os.getenv("SREGYM_SOP_VARIANT") == "r1i-typed-handoff-journal-v1"
     _gate = R1fGate(strict_postconditions=is_r1i)
     _handoff = None
     _stage = "diagnosis"
     _handoff_rejections = 0
     DiagnosisAgent.force_submit = _bounded_force_submit if is_r1i else _legacy_incomplete_submit
+    _original_diagnosis_call_model = DiagnosisAgent.call_model
+    if is_r1i:
+        DiagnosisAgent.call_model = _r1i_call_model
     driver.wait_for_stage_switch = _wait
     driver.generate_run_summary = _handoff_projection
     _original_diagnosis_submit = submit_tool.coroutine

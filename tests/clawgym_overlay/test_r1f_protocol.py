@@ -4,6 +4,7 @@ import asyncio
 import json
 
 from langgraph.types import Command
+from langchain_core.messages import AIMessage
 
 from clawgym_overlay.r1f_protocol import (
     R1fGate,
@@ -204,3 +205,26 @@ def test_runtime_submit_hook_normalises_without_triggering_conductor(monkeypatch
     assert driver._handoff is not None
     assert driver._handoff["status"] == "complete"
     assert driver._gate.handoff_validated
+
+
+def test_r1i_text_handoff_is_promoted_to_explicit_submit_tool_call(monkeypatch) -> None:
+    import clawgym_overlay.reference_driver_r1f as driver
+
+    class Submit:
+        name = "submit_tool"
+
+    class Agent:
+        submit_tool = Submit()
+
+    answer = _attempt10_style_submission()
+    original = lambda self, state: {
+        "messages": [AIMessage(content=[{"type": "text", "text": answer}])]
+    }
+    monkeypatch.setenv("SREGYM_RUN_MANIFEST_DIGEST", RUN)
+    monkeypatch.setenv("SREGYM_AGENT_RELEASE_DIGEST", RELEASE)
+    monkeypatch.setattr(driver, "_original_diagnosis_call_model", original)
+
+    result = driver._r1i_call_model(Agent(), {"messages": []})
+    call = result["messages"][0].tool_calls[0]
+    assert call["name"] == "submit_tool"
+    assert call["args"]["ans"] == answer
