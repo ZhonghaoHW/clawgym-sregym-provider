@@ -470,7 +470,11 @@ class SafeStratusRunner:
                 overlay = Path(__file__).resolve().parent / "reference_driver_r1e.py"
                 protocol = Path(__file__).resolve().parent / "r1e_protocol.py"
                 image_index = command.index(image_id)
-                command[image_index:image_index] = ["-v", f"{overlay.resolve()}:/opt/clawgym_overlay/reference_driver_r1e.py:ro", "-v", f"{protocol.resolve()}:/opt/clawgym_overlay/r1e_protocol.py:ro", "-e", "PYTHONPATH=/opt/clawgym_overlay:/opt/sregym"]
+                # Mount the two R1e modules beneath a fixed package directory.
+                # The package's parent (/opt), rather than the package itself,
+                # must be on PYTHONPATH so ``import clawgym_overlay.r1e_protocol``
+                # resolves inside the isolated container.
+                command[image_index:image_index] = ["-v", f"{overlay.resolve()}:/opt/clawgym_overlay/reference_driver_r1e.py:ro", "-v", f"{protocol.resolve()}:/opt/clawgym_overlay/r1e_protocol.py:ro", "-e", "PYTHONPATH=/opt:/opt/sregym"]
                 image_index = command.index(image_id)
                 command[image_index:image_index] = sum((['-v', mount] for mount in _r1e_config_mounts(self._profile)), [])
             try:
