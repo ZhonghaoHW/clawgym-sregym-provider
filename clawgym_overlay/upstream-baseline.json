@@ -54,6 +54,7 @@
     "tests/kubectl_tool_tests/kubectl_tool_set_test.py",
     "tests/kubectl_tool_tests/nl2kubectl_agent.py",
     "tests/service/apps/test_hotel_reservation.py",
+    "tests/integration/smoke_test.py",
     "tests/file_editing/test_file_editing_tool.py"
   ],
   "core_patches": [

@@ -19,7 +19,7 @@ POLL_INTERVAL_S = 5
 
 async def _run_smoke_test():
     # 1. Create Conductor with Loki disabled (saves CI time)
-    conductor = Conductor(config=ConductorConfig(deploy_loki=False))
+    conductor = Conductor(config=ConductorConfig(deploy_loki=False, task_stages=["mitigation"]))
 
     # 2. Select the problem
     conductor.problem_id = PROBLEM_ID
