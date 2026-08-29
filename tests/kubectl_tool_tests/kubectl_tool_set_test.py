@@ -54,8 +54,12 @@ def get_agent(is_mock):
 
 
 def validate_condition(validate_cmd, validator):
-    exec_shell_cmd(validate_cmd)
-    return eval(validator)
+    # The fixture validators intentionally refer to the captured command
+    # output as ``opt`` (for example, ``len(opt.strip()) > 0``).  Bind that
+    # value explicitly and keep evaluation limited to the trusted fixture
+    # expression surface.
+    opt = exec_shell_cmd(validate_cmd)
+    return bool(eval(validator, {"__builtins__": {"len": len}}, {"opt": opt}))
 
 
 def set_up_preconditions(preconditions):

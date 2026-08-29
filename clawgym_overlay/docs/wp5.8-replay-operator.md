@@ -69,6 +69,13 @@ state is absent. Slow model-judge tests are selected explicitly with
 The upstream train-ticket API suite is a separate live-application command and
 requires an explicit `GATEWAY_URL` or an already configured Kubernetes service.
 
+The kubectl fixture suite additionally relies on a small, explicit helper
+contract: each validator expression receives the captured command output as
+`opt`. If that binding is missing, the suite fails deterministically before
+testing the agent. Keep this helper in the integration layer and verify it
+with an offline regression; do not weaken production tool identity or hide the
+failure with a skip.
+
 The AgentAdapter boundary has two recurring invariants. A session identity is
 created once and passed unchanged through the transport, tool constructor and
 retry path. Test doubles must use real constructors (or a shared complete

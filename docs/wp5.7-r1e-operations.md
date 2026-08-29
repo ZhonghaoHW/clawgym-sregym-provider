@@ -91,6 +91,18 @@ R1n, E0, model, Oracle or cluster behavior:
    It is an upstream live-application test, not a Provider offline test, and is
    outside the default Provider test path. It remains explicitly runnable only
    with a configured `GATEWAY_URL` (or a live Kubernetes service).
+5. The kubectl fixture validator discarded the command output even though
+   its YAML expressions refer to that output as `opt`. This produced a
+   deterministic `NameError` before any tool assertion ran. The validator now
+   binds `opt` explicitly and evaluates only the documented fixture
+   expression surface; this is a test-fixture repair, not an agent or Oracle
+   capability change.
+
+The ECS replay also established an important ordering rule: run the offline
+gate first, then explicitly selected live suites on the target host. A live
+suite can expose stale helper assumptions that local collection cannot see;
+such failures must be fixed in the helper contract and replayed, never
+converted into skips or folded into R1n evidence.
 
 The Provider test contract is split into four explicit layers:
 
