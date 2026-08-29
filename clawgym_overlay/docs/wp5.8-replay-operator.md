@@ -56,3 +56,23 @@ and recorded source/submodule snapshots from that release and verify
 be re-materialized from the deployment lock or a separately retained custom
 image. Secrets, kubeconfig and signing private keys are never part of the
 reserve and must be injected/generated on the replacement worker.
+
+## Test and adapter boundary
+
+Provider validation has four deliberately separate entry points. The default
+`uv run pytest` command uses only the repository's offline `tests/` tree and
+must not contact a cluster, gateway, model endpoint or external application.
+Integration tests are selected explicitly with `-o addopts='' -m integration`;
+they retain their host-capability preflights and fail closed when Kind/OpenEBS
+state is absent. Slow model-judge tests are selected explicitly with
+`-o addopts='' -m slow` and require `JUDGE_MODEL_ID`.
+The upstream train-ticket API suite is a separate live-application command and
+requires an explicit `GATEWAY_URL` or an already configured Kubernetes service.
+
+The AgentAdapter boundary has two recurring invariants. A session identity is
+created once and passed unchanged through the transport, tool constructor and
+retry path. Test doubles must use real constructors (or a shared complete
+factory) rather than `__new__`, because newly required release/tool state must
+be initialized explicitly. A missing host capability remains an infrastructure
+finding; it must never be converted into a successful episode by changing the
+Oracle or relaxing the adapter gate.

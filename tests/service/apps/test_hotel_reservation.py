@@ -37,16 +37,17 @@ spec:
 """
     deployment_path.write_text(original)
 
-    app = HotelReservation.__new__(HotelReservation)
-    app.k8s_deploy_path = source
-    app.deployment_env_overrides = {
-        "rate": {
-            "hotel-reserv-rate": {
-                "RATE_BACKEND_QPS_LIMIT": "20",
-                "RATE_QUEUE_CAPACITY": "256",
+    app = HotelReservation(
+        deployment_env_overrides={
+            "rate": {
+                "hotel-reserv-rate": {
+                    "RATE_BACKEND_QPS_LIMIT": "20",
+                    "RATE_QUEUE_CAPACITY": "256",
+                }
             }
         }
-    }
+    )
+    app.k8s_deploy_path = source
 
     with app._rendered_deployment_configs() as rendered_path:
         rendered = yaml.safe_load((Path(rendered_path) / "rate.yaml").read_text())
@@ -61,9 +62,10 @@ spec:
 
 
 def test_deployment_env_overrides_reject_unknown_targets(tmp_path):
-    app = HotelReservation.__new__(HotelReservation)
+    app = HotelReservation(
+        deployment_env_overrides={"missing": {"container": {"SETTING": "value"}}}
+    )
     app.k8s_deploy_path = tmp_path
-    app.deployment_env_overrides = {"missing": {"container": {"SETTING": "value"}}}
 
     try:
         with app._rendered_deployment_configs():

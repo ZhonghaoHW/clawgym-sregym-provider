@@ -11,6 +11,8 @@ from tests.kubectl_tool_tests.nl2kubectl_agent import NL2KubectlAgent
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+pytestmark = pytest.mark.integration
+
 KUBECTL_TOOL_TEST_DIR = Path(__file__).resolve().parent
 PRECONDITIONS_FILE = KUBECTL_TOOL_TEST_DIR / "tests" / "preconditions.yaml"
 with open(PRECONDITIONS_FILE) as _f:

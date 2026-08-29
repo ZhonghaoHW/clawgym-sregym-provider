@@ -70,3 +70,42 @@ runtime and observation contract is reusable on a restored worker; it does not
 establish cross-agent conformance, change R0 or authorize environment
 evolution. The final worker check found all four Kind nodes Ready, no test
 namespace, no agent container and no temporary transfer archive.
+
+## Provider test-gate closure lessons (2026-08-30)
+
+The first post-replay local run reported `637 passed, 5 failed, 2 skipped`.
+Those failures were deterministic test-contract problems, not intermittent
+R1n, E0, model, Oracle or cluster behavior:
+
+1. The OpenEBS smoke test correctly failed closed because the local Kind node
+   did not contain the required `/run/udev` mount. This is a live host-capability
+   failure and must not be counted as an offline unit-test failure or hidden by
+   a permissive skip.
+2. The kubectl tool helper created the SSE session header but omitted the
+   required `session_id` argument when constructing `ExecKubectlCmdSafely`.
+   One generated session identity is now passed to both surfaces.
+3. Two HotelReservation rendering tests used `__new__` and bypassed the
+   constructor's `deployment_image_overrides` field. They now use the real
+   constructor so required state cannot silently disappear.
+4. The train-ticket API test performs gateway discovery during module import.
+   It is an upstream live-application test, not a Provider offline test, and is
+   outside the default Provider test path. It remains explicitly runnable only
+   with a configured `GATEWAY_URL` (or a live Kubernetes service).
+
+The Provider test contract is split into four explicit layers:
+
+```text
+uv run pytest
+    offline Provider gate; no cluster, gateway or external application
+uv run pytest -o addopts='' tests/integration -m integration
+    live Kind/OpenEBS capability gate; fail closed on missing host state
+uv run pytest -o addopts='' tests/kubectl_tool_tests -m integration
+    live Kubernetes/MCP tool gate
+uv run pytest -o addopts='' tests/llm_as_a_judge -m slow
+    live model-judge gate; requires JUDGE_MODEL_ID
+```
+
+This separation makes a green offline gate meaningful without weakening the
+live environment contract. Slow model-judge tests are excluded even when their
+environment variable is present. It is test hygiene only; it does not change
+R1n, the `164f…` runtime, E0, the Oracle or retained evidence.

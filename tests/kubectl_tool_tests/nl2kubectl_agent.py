@@ -60,13 +60,14 @@ def route_tools(state: State):
 class NL2KubectlAgent:
     def __init__(self, llm):
         session_id = str(uuid.uuid4())
+        self.session_id = session_id
         transport = SSETransport(
             url=KUBECTL_TOOLS_MCP_URL,
             headers={"sregym_ssid": session_id},
         )
         self.client = Client(transport)
 
-        exec_kubectl_cmd_safely = ExecKubectlCmdSafely(self.client)
+        exec_kubectl_cmd_safely = ExecKubectlCmdSafely(self.client, session_id=session_id)
         rollback_command = RollbackCommand(self.client)
         get_previous_rollbackable_cmd = GetPreviousRollbackableCmd(self.client)
         self.kubectl_tools = [

@@ -96,6 +96,30 @@ Before contributing, please:
 
 5. Set up your cluster (see [README.md](README.md#🚀quickstart) for options)
 
+### Test layers
+
+The default gate is intentionally offline and only collects Provider-owned
+tests:
+
+```bash
+uv run pytest
+```
+
+Tests that require a real Kind/OpenEBS cluster or MCP server are opt-in:
+
+```bash
+uv run pytest -o addopts='' tests/integration -m integration
+uv run pytest -o addopts='' tests/kubectl_tool_tests -m integration
+GATEWAY_URL=http://... uv run pytest -o addopts='' \
+  SREGym-applications/train-ticket/tests/test_api.py
+JUDGE_MODEL_ID=... uv run pytest -o addopts='' \
+  tests/llm_as_a_judge -m slow
+```
+
+Live tests fail closed when their host or gateway capability is missing. Do
+not add network discovery, cluster mutation, model calls or gateway calls at
+module import time to the default offline suite.
+
 ## How to Contribute
 
 ### Reporting Bugs
