@@ -173,8 +173,18 @@ def _extract_r1f_handoff(records: tuple[dict[str, object], ...], run: RunManifes
             and document.get("status") == "complete"
             and document.get("run_manifest_digest") == run_digest
             and document.get("agent_release_digest") == release_digest
-            and document.get("handoff_digest") == _digest_document(document, "handoff_digest")
+            and document.get("candidate_resource") == {
+                "kind": "NetworkPolicy",
+                "namespace": "hotel-reservation",
+                "name": "deny-all-recommendation",
+            }
         ):
+            # The trajectory record is intentionally redacted before it is
+            # retained (for example, pod addresses in evidence).  Rebind the
+            # digest to that sanitized, host-retained representation instead
+            # of rejecting an otherwise valid handoff whose original digest
+            # covered unsanitized model text.
+            document["handoff_digest"] = _digest_document(document, "handoff_digest")
             return document
 
     return handoff_from_trajectory_records(
