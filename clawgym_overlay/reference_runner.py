@@ -123,6 +123,37 @@ def _extract_r1d_handoff(records: tuple[dict[str, object], ...], run: RunManifes
     return document
 
 
+def _extract_r1e_handoff(records: tuple[dict[str, object], ...], run: RunManifest) -> dict[str, object]:
+    """R1e accepts only an explicit, identity-bound handoff marker."""
+    release_digest = getattr(getattr(run, "agent_release", None), "agent_release_digest", "")
+    required = ("symptom", "target_component", "evidence", "root_cause_hypothesis", "candidate_resource", "minimal_remediation", "verification_plan")
+    found = None
+    for record in records:
+        for line in str(record.get("text", "")).splitlines():
+            if "R1E_HANDOFF_JSON" not in line:
+                continue
+            try:
+                value = json.loads(line.split("R1E_HANDOFF_JSON", 1)[-1].lstrip(" :"))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict) and value.get("status") == "complete" and all(k in value for k in required):
+                found = value
+                break
+        if found:
+            break
+    if found is None:
+        document = {"schema_id": "clawgym.sregym_diagnosis_handoff.v2", "status": "incomplete", "run_manifest_digest": run.manifest_digest, "agent_release_digest": release_digest, "symptom": "", "target_component": "", "evidence": [], "root_cause_hypothesis": "", "candidate_resource": {"kind": "", "namespace": "", "name": ""}, "minimal_remediation": "", "verification_plan": []}
+    else:
+        document = {"schema_id": "clawgym.sregym_diagnosis_handoff.v2", "status": "complete", "run_manifest_digest": run.manifest_digest, "agent_release_digest": release_digest, "symptom": str(found.get("symptom", "")), "target_component": str(found.get("target_component", "")), "evidence": found.get("evidence", []), "root_cause_hypothesis": str(found.get("root_cause_hypothesis", "")), "candidate_resource": found.get("candidate_resource", {}), "minimal_remediation": str(found.get("minimal_remediation", "")), "verification_plan": found.get("verification_plan", [])}
+    document["handoff_digest"] = _digest_document(document, "handoff_digest")
+    if document.get("status") == "complete":
+        from clawgym_overlay.r1e_protocol import TARGET
+        if document.get("candidate_resource") != TARGET:
+            document["status"] = "incomplete"
+            document["handoff_digest"] = _digest_document(document, "handoff_digest")
+    return document
+
+
 def _r1d_transaction(handoff: dict[str, object], ledger: dict[str, object], run: RunManifest) -> dict[str, object]:
     mutations = [item for item in ledger.get("records", []) if isinstance(item, dict) and item.get("operation") == "mutate"]
     target = handoff.get("candidate_resource", {})
@@ -138,6 +169,35 @@ def _r1d_verification_observation(ledger: dict[str, object], run: RunManifest) -
     boundary = mutations[0].get("sequence", 0) if mutations else 0
     observations = [{"sequence": item.get("sequence"), "operation": "read", "outcome": item.get("outcome")} for item in ledger.get("records", []) if isinstance(item, dict) and item.get("operation") == "read" and item.get("sequence", 0) > boundary]
     document = {"schema_id": "clawgym.sregym_verification_observation.v1", "run_manifest_digest": run.manifest_digest, "agent_release_digest": getattr(getattr(run, "agent_release", None), "agent_release_digest", ""), "observations": observations}
+    document["observation_digest"] = _digest_document(document, "observation_digest")
+    return document
+
+
+def _r1e_transaction(handoff: dict[str, object], ledger: dict[str, object], run: RunManifest) -> dict[str, object]:
+    records = [item for item in ledger.get("records", []) if isinstance(item, dict)]
+    mutations = [item for item in records if item.get("operation") == "mutate"]
+    reads = [item for item in records if item.get("operation") == "read"]
+    target = {"kind": "NetworkPolicy", "namespace": "hotel-reservation", "name": "deny-all-recommendation"}
+    exact = [m for m in mutations if m.get("resource") == target and m.get("outcome") == "executed"]
+    pre = any(r.get("resource") == target and r.get("sequence", 0) < (exact[0].get("sequence", 10**9) if exact else 10**9) and r.get("outcome") == "executed" for r in reads)
+    post = any(r.get("resource") == target and r.get("sequence", 0) > (exact[0].get("sequence", 0) if exact else 0) and r.get("result_summary") == "not_found" for r in reads)
+    endpoint = any("recommendation" in str(r.get("resource", {}).get("name", "")) and r.get("result_summary") == "ready" for r in reads)
+    mutation = exact[0] if exact else (mutations[0] if mutations else {})
+    document = {"schema_id": "clawgym.sregym_remediation_transaction.v2", "run_manifest_digest": run.manifest_digest, "agent_release_digest": getattr(getattr(run, "agent_release", None), "agent_release_digest", ""), "status": "executed" if len(mutations) == 1 and exact and pre and post and endpoint else "incomplete", "target": target, "handoff_digest": str(handoff.get("handoff_digest", "")), "gate_trace": ["handoff_validated", "precondition_read", "single_mutation", "target_reread", "endpoint_read"], "precondition": {"policy_exists": pre, "target_matches": bool(mutation.get("resource") == target), "observation_digest": hashlib.sha256(json.dumps(reads, sort_keys=True, separators=(",", ":")).encode()).hexdigest()}, "mutation": {"attempted": bool(mutations), "count": len(mutations), "verb": "delete", "command_sha256": str(mutation.get("command_sha256", "")), "outcome": str(mutation.get("outcome", "none")) if mutations else "none", "target_matches": bool(mutation.get("resource") == target)}, "postcondition": {"target_absent": post, "endpoint_ready": endpoint, "observation_digest": hashlib.sha256(json.dumps(reads, sort_keys=True, separators=(",", ":")).encode()).hexdigest()}}
+    document["transaction_digest"] = _digest_document(document, "transaction_digest")
+    return document
+
+
+def _r1e_verification_observation(ledger: dict[str, object], run: RunManifest) -> dict[str, object]:
+    records = [item for item in ledger.get("records", []) if isinstance(item, dict) and item.get("operation") == "read"]
+    observations = []
+    for item in records:
+        resource = item.get("resource", {})
+        if resource == {"kind": "NetworkPolicy", "namespace": "hotel-reservation", "name": "deny-all-recommendation"}:
+            observations.append({"kind": "target_reread", "outcome": "target_absent" if item.get("result_summary") == "not_found" else "target_present"})
+        elif "recommendation" in str(resource.get("name", "")):
+            observations.append({"kind": "endpoint_read", "outcome": "endpoint_ready" if item.get("result_summary") == "ready" else "unknown"})
+    document = {"schema_id": "clawgym.sregym_verification_observation.v2", "run_manifest_digest": run.manifest_digest, "agent_release_digest": getattr(getattr(run, "agent_release", None), "agent_release_digest", ""), "target": {"kind": "NetworkPolicy", "namespace": "hotel-reservation", "name": "deny-all-recommendation"}, "observations": observations}
     document["observation_digest"] = _digest_document(document, "observation_digest")
     return document
 
@@ -210,7 +270,9 @@ def _extract_action_ledger(records: tuple[dict[str, object], ...], run: RunManif
         else:
             outcome = "executed"
         command = str(event.get("command", ""))
-        entries.append({"sequence": sequence, "stage": event["stage"], "tool": event["tool"], "operation": event["operation"], "command_sha256": hashlib.sha256(command.encode()).hexdigest(), "resource": event["resource"], "outcome": outcome})
+        response_lower = response.lower()
+        result_summary = "not_found" if ("notfound" in response_lower or "not found" in response_lower) else "ready" if ("ready" in response_lower or "addresses" in response_lower) else "error" if outcome in {"failed", "rejected"} else "ok" if outcome == "executed" else "unknown"
+        entries.append({"sequence": sequence, "stage": event["stage"], "tool": event["tool"], "operation": event["operation"], "command_sha256": hashlib.sha256(command.encode()).hexdigest(), "resource": event["resource"], "outcome": outcome, "result_summary": result_summary})
     summary = {"total": len(entries), "read": sum(e["operation"] == "read" for e in entries), "mutate": sum(e["operation"] == "mutate" for e in entries), "submit": sum(e["operation"] == "submit" for e in entries), "unknown": sum(e["operation"] == "unknown" for e in entries), "executed_mutations": sum(e["operation"] == "mutate" and e["outcome"] == "executed" for e in entries)}
     document = {"schema_id": schema_id, "run_manifest_digest": run.manifest_digest, "agent_release_digest": release_digest, "records": entries, "summary": summary}
     document["ledger_digest"] = _digest_document(document, "ledger_digest")
@@ -310,6 +372,25 @@ def _r1d_config_mounts(profile: dict) -> list[str]:
     return mounts
 
 
+def _r1e_config_mounts(profile: dict) -> list[str]:
+    if profile.get("sop_variant") != "r1e-runtime-gated-v1":
+        return []
+    root = Path(__file__).resolve().parent / "manifests"
+    bundle = json.loads((root / "agent.reference-stratus-r1e.config-bundle.v1.json").read_text(encoding="utf-8"))
+    actual = hashlib.sha256(json.dumps({k: v for k, v in bundle.items() if k != "bundle_digest"}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    if bundle.get("bundle_digest") != actual or profile.get("config_bundle_digest") != actual:
+        raise RuntimeError("R1e configuration bundle digest mismatch")
+    mounts = []
+    for item in bundle.get("files", []):
+        source = root / item["path"]
+        if not source.is_file() or source.is_symlink() or hashlib.sha256(source.read_bytes()).hexdigest() != item["sha256_digest"]:
+            raise RuntimeError("R1e configuration file digest mismatch")
+        mounts.append(f"{source.resolve()}:{item['container_path']}:ro")
+    if len(mounts) != 4:
+        raise RuntimeError("R1e configuration bundle is incomplete")
+    return mounts
+
+
 class SafeStratusRunner:
     """Run Stratus with only filtered Kubernetes access and one model credential."""
 
@@ -356,6 +437,8 @@ class SafeStratusRunner:
                 "--env-file", str(env_file),
                 "-e", f"SREGYM_ARTIFACT_ID={self._profile['artifact_id']}",
                 "-e", f"SREGYM_SOP_VARIANT={self._profile.get('sop_variant', 'r0-baseline')}",
+                "-e", f"SREGYM_RUN_MANIFEST_DIGEST={run_manifest.manifest_digest}",
+                "-e", f"SREGYM_AGENT_RELEASE_DIGEST={getattr(getattr(run_manifest, 'agent_release', None), 'agent_release_digest', '')}",
                 "-e", "API_HOSTNAME=host.docker.internal",
                 "-e", "MCP_SERVER_URL=http://host.docker.internal:9954",
                 "--entrypoint", command_profile[0],
@@ -383,6 +466,12 @@ class SafeStratusRunner:
                 command[image_index:image_index] = ["-v", f"{overlay.resolve()}:/opt/clawgym_overlay/reference_driver_r1d.py:ro", "-e", "PYTHONPATH=/opt/clawgym_overlay:/opt/sregym"]
                 image_index = command.index(image_id)
                 command[image_index:image_index] = sum((['-v', mount] for mount in _r1d_config_mounts(self._profile)), [])
+            elif self._profile.get("sop_variant") == "r1e-runtime-gated-v1":
+                overlay = Path(__file__).resolve().parent / "reference_driver_r1e.py"
+                image_index = command.index(image_id)
+                command[image_index:image_index] = ["-v", f"{overlay.resolve()}:/opt/clawgym_overlay/reference_driver_r1e.py:ro", "-e", "PYTHONPATH=/opt/clawgym_overlay:/opt/sregym"]
+                image_index = command.index(image_id)
+                command[image_index:image_index] = sum((['-v', mount] for mount in _r1e_config_mounts(self._profile)), [])
             try:
                 completed = subprocess.run(
                     command, capture_output=True, text=False, timeout=timeout_seconds, check=False
@@ -397,8 +486,9 @@ class SafeStratusRunner:
             trajectories = _trajectory_records(Path(logs))
         duration_ms = int((time.monotonic() - started) * 1000)
         is_r1d = self._profile.get("sop_variant") == "r1d-typed-remediation-v1"
-        handoff = _extract_r1d_handoff(trajectories, run_manifest) if is_r1d else (_extract_r1c_handoff(trajectories, run_manifest) if self._profile.get("sop_variant") in {"r1c-structured-attribution-v1", "r1c-structured-attribution-deepseek-v1"} else None)
-        ledger = _extract_action_ledger(trajectories, run_manifest, schema_id="clawgym.sregym_agent_action_ledger.v2" if is_r1d else "clawgym.sregym_agent_action_ledger.v1") if is_r1d or self._profile.get("sop_variant") in {"r1c-structured-attribution-v1", "r1c-structured-attribution-deepseek-v1"} else None
+        is_r1e = self._profile.get("sop_variant") == "r1e-runtime-gated-v1"
+        handoff = _extract_r1e_handoff(trajectories, run_manifest) if is_r1e else (_extract_r1d_handoff(trajectories, run_manifest) if is_r1d else (_extract_r1c_handoff(trajectories, run_manifest) if self._profile.get("sop_variant") in {"r1c-structured-attribution-v1", "r1c-structured-attribution-deepseek-v1"} else None))
+        ledger = _extract_action_ledger(trajectories, run_manifest, schema_id="clawgym.sregym_agent_action_ledger.v2" if (is_r1d or is_r1e) else "clawgym.sregym_agent_action_ledger.v1") if is_r1d or is_r1e or self._profile.get("sop_variant") in {"r1c-structured-attribution-v1", "r1c-structured-attribution-deepseek-v1"} else None
         return ReferenceAgentExecution(
             exit_code=exit_code,
             submission={"reference_agent": "stratus", "run_manifest_digest": run_manifest.manifest_digest},
@@ -411,6 +501,6 @@ class SafeStratusRunner:
             timeout_seconds=timeout_seconds,
             diagnosis_handoff=handoff,
             action_ledger=ledger,
-            remediation_transaction=_r1d_transaction(handoff, ledger, run_manifest) if is_r1d and handoff is not None and ledger is not None else None,
-            verification_observation=_r1d_verification_observation(ledger, run_manifest) if is_r1d and ledger is not None else None,
+            remediation_transaction=_r1e_transaction(handoff, ledger, run_manifest) if is_r1e and handoff is not None and ledger is not None else (_r1d_transaction(handoff, ledger, run_manifest) if is_r1d and handoff is not None and ledger is not None else None),
+            verification_observation=_r1e_verification_observation(ledger, run_manifest) if is_r1e and ledger is not None else (_r1d_verification_observation(ledger, run_manifest) if is_r1d and ledger is not None else None),
         )

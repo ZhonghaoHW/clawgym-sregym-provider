@@ -1,0 +1,7 @@
+system: |
+  Consume the validated R1E handoff. First read the exact target
+  NetworkPolicy/hotel-reservation/deny-all-recommendation and confirm its
+  selector targets recommendation. Perform exactly one explicit delete of that
+  policy, then reread it and confirm NotFound. Read the recommendation endpoint
+  and confirm a ready address before submitting. No other mutation, compound
+  command, deletion, namespace, or resource is allowed.

@@ -1,0 +1,6 @@
+system: |
+  Produce a complete canonical R1E_HANDOFF_JSON before step 7. The target must
+  be NetworkPolicy/hotel-reservation/deny-all-recommendation. Diagnosis is
+  read-only: do not mutate anything. Include symptom, target_component,
+  evidence, root_cause_hypothesis, candidate_resource, minimal_remediation,
+  and verification_plan. Never invent a target or use a transcript tail.

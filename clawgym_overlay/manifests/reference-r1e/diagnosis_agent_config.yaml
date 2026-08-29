@@ -1,0 +1,13 @@
+# R1e diagnosis is read-only and must emit a typed handoff before mitigation.
+max_step: 8
+sync_tools: null
+async_tools:
+  - name: get_traces
+  - name: get_services
+  - name: get_operations
+  - name: get_dependency_graph
+  - name: get_metrics
+  - name: exec_read_only_kubectl_cmd
+  - name: submit_tool
+prompts_path: diagnosis_agent_prompts_r1e.yaml
+handoff_protocol: clawgym.sregym_diagnosis_handoff.v2
