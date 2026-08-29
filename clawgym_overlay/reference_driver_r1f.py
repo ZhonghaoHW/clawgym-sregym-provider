@@ -46,6 +46,15 @@ def _canonical_text(document: dict[str, object]) -> str:
     return f"{MARKER} " + json.dumps(document, sort_keys=True, separators=(",", ":"))
 
 
+def _r1i_normalise_submission(answer: str, *, run_digest: str, release_digest: str):
+    """Normalize one final structured answer, with or without its marker."""
+
+    value = answer if MARKER in answer else f"{MARKER} {answer}"
+    return normalise_handoff_submission(
+        value, run_manifest_digest=run_digest, agent_release_digest=release_digest
+    )
+
+
 async def _bounded_force_submit(self, state):
     """Use one bounded, typed finalization turn at the diagnosis budget.
 
@@ -72,9 +81,7 @@ async def _bounded_force_submit(self, state):
             if isinstance(args, dict) and isinstance(args.get("ans"), str):
                 answer = args["ans"]
     document = (
-        normalise_handoff_submission(
-            answer, run_manifest_digest=run_digest, agent_release_digest=release_digest
-        )
+        _r1i_normalise_submission(answer, run_digest=run_digest, release_digest=release_digest)
         if answer is not None
         else None
     )
@@ -118,8 +125,8 @@ def _r1i_call_model(self, state):
     if not isinstance(content, str):
         return result
     run_digest, release_digest = _identities()
-    if normalise_handoff_submission(
-        content, run_manifest_digest=run_digest, agent_release_digest=release_digest
+    if _r1i_normalise_submission(
+        content, run_digest=run_digest, release_digest=release_digest
     ) is None:
         return result
     synthetic = AIMessage(
@@ -139,9 +146,14 @@ def _r1i_call_model(self, state):
 async def _gated_diagnosis_submit(ans: str, state, tool_call_id: str) -> Command:
     global _handoff, _handoff_rejections
     run_digest, release_digest = _identities()
-    document = normalise_handoff_submission(
-        ans, run_manifest_digest=run_digest, agent_release_digest=release_digest
-    )
+    if os.getenv("SREGYM_SOP_VARIANT") == "r1i-typed-handoff-journal-v1":
+        document = _r1i_normalise_submission(
+            ans, run_digest=run_digest, release_digest=release_digest
+        )
+    else:
+        document = normalise_handoff_submission(
+            ans, run_manifest_digest=run_digest, agent_release_digest=release_digest
+        )
     if document is None:
         _handoff_rejections += 1
         if _handoff_rejections > 1:

@@ -228,3 +228,25 @@ def test_r1i_text_handoff_is_promoted_to_explicit_submit_tool_call(monkeypatch) 
     call = result["messages"][0].tool_calls[0]
     assert call["name"] == "submit_tool"
     assert call["args"]["ans"] == answer
+
+
+def test_r1i_plain_json_submit_argument_is_accepted(monkeypatch) -> None:
+    import clawgym_overlay.reference_driver_r1f as driver
+
+    monkeypatch.setenv("SREGYM_SOP_VARIANT", "r1i-typed-handoff-journal-v1")
+    monkeypatch.setenv("SREGYM_RUN_MANIFEST_DIGEST", RUN)
+    monkeypatch.setenv("SREGYM_AGENT_RELEASE_DIGEST", RELEASE)
+    monkeypatch.setattr(driver, "_handoff", None)
+    monkeypatch.setattr(driver, "_handoff_rejections", 0)
+    monkeypatch.setattr(driver, "_gate", R1fGate())
+
+    result = asyncio.run(
+        driver._gated_diagnosis_submit(
+            _attempt10_style_submission().removeprefix("R1F_HANDOFF_JSON\n"),
+            {"num_steps": 4},
+            "call-plain",
+        )
+    )
+    assert isinstance(result, Command)
+    assert driver._handoff is not None
+    assert driver._handoff["status"] == "complete"
