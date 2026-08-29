@@ -43,11 +43,17 @@
   },
   "controlled_root_changes": [
     "pyproject.toml",
+    "CONTRIBUTING.md",
     "uv.lock",
     ".gitignore",
     "docs/wp5.6-r1c-operations.md",
     "docs/wp5.7-r1d-operations.md",
     "docs/wp5.7-r1e-operations.md",
+    ".github/workflows/smoke-test.yml",
+    "tests/test_kubectl_tool_identity.py",
+    "tests/kubectl_tool_tests/kubectl_tool_set_test.py",
+    "tests/kubectl_tool_tests/nl2kubectl_agent.py",
+    "tests/service/apps/test_hotel_reservation.py",
     "tests/file_editing/test_file_editing_tool.py"
   ],
   "core_patches": [
