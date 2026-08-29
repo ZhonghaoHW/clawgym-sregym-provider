@@ -468,8 +468,9 @@ class SafeStratusRunner:
                 command[image_index:image_index] = sum((['-v', mount] for mount in _r1d_config_mounts(self._profile)), [])
             elif self._profile.get("sop_variant") == "r1e-runtime-gated-v1":
                 overlay = Path(__file__).resolve().parent / "reference_driver_r1e.py"
+                protocol = Path(__file__).resolve().parent / "r1e_protocol.py"
                 image_index = command.index(image_id)
-                command[image_index:image_index] = ["-v", f"{overlay.resolve()}:/opt/clawgym_overlay/reference_driver_r1e.py:ro", "-e", "PYTHONPATH=/opt/clawgym_overlay:/opt/sregym"]
+                command[image_index:image_index] = ["-v", f"{overlay.resolve()}:/opt/clawgym_overlay/reference_driver_r1e.py:ro", "-v", f"{protocol.resolve()}:/opt/clawgym_overlay/r1e_protocol.py:ro", "-e", "PYTHONPATH=/opt/clawgym_overlay:/opt/sregym"]
                 image_index = command.index(image_id)
                 command[image_index:image_index] = sum((['-v', mount] for mount in _r1e_config_mounts(self._profile)), [])
             try:
