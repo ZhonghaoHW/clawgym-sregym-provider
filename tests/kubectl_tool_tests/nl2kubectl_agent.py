@@ -130,18 +130,15 @@ class NL2KubectlAgent:
         )
 
         output = [*state["messages"], ai_message_template]
-        return {
-            "messages": output,
-            "curr_file": state["curr_file"],
-            "curr_line": state["curr_line"],
-        }
+        # ``curr_file``/``curr_line`` are not part of the kubectl State
+        # contract; returning them here caused a KeyError when LangGraph
+        # normalized the initial state. Keep the mock aligned with State.
+        return {"messages": output}
 
     def llm_inference_step(self, state: State):
         logger.info("invoking llm inference, custom state: %s", state)
         return {
             "messages": [self.llm.inference(messages=state["messages"], tools=self.kubectl_tools)],
-            "curr_file": state["curr_file"],
-            "curr_line": state["curr_line"],
         }
 
     def build_agent(self, mock: bool = False):

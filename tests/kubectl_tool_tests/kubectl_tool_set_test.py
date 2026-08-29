@@ -30,7 +30,16 @@ WAIT_TIME_GAP = 3
 
 def exec_shell_cmd(cmd: str):
     try:
-        out = subprocess.run(cmd, shell=True, check=True, capture_output=True)  # nosec B602
+        # Campaign fixtures use paths relative to this test package. Pin the
+        # subprocess cwd so the suite behaves identically from the repository
+        # root and from an explicit integration-test invocation.
+        out = subprocess.run(  # nosec B602
+            cmd,
+            shell=True,
+            check=True,
+            capture_output=True,
+            cwd=KUBECTL_TOOL_TEST_DIR,
+        )
         result = out.stdout.decode("utf-8")
         logger.info(f"Successfully running command: {cmd}\nresult:\n{result}")
         return result
