@@ -45,3 +45,14 @@ cannot be reused as proof for the new one. Run a new no-model readiness check,
 the E0 control, and then the three fixed R1n cases in order. Upload the new
 bundles to a new external archive and create fresh provenance/attestation
 sidecars; never reuse an attempt identity or the attestation private key.
+
+## GitHub reserve
+
+The sanitized offline reserve and exact source snapshots are published in the
+private repository `https://github.com/ZhonghaoHW/clawgym-recovery-archive`,
+release `wp5.8-recovery-2026-08-30`. Restore the deployment cache, Kind config
+and recorded source/submodule snapshots from that release and verify
+`SHA256SUMS` before use. Locked image layers are intentionally absent and must
+be re-materialized from the deployment lock or a separately retained custom
+image. Secrets, kubeconfig and signing private keys are never part of the
+reserve and must be injected/generated on the replacement worker.
