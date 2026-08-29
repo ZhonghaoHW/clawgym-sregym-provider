@@ -41,10 +41,17 @@ def _handoff_projection(last_state, _prompt):
     release_digest = os.getenv("SREGYM_AGENT_RELEASE_DIGEST", "")
     for message in messages if isinstance(messages, list) else []:
         content = message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "")
-        if "R1E_HANDOFF_JSON" not in str(content):
+        candidates = [str(content)]
+        calls = message.get("tool_calls", []) if isinstance(message, dict) else getattr(message, "tool_calls", [])
+        for call in calls if isinstance(calls, list) else []:
+            args = call.get("args", {}) if isinstance(call, dict) else {}
+            if isinstance(args, dict):
+                candidates.append(str(args.get("ans", "")))
+        if not any("R1E_HANDOFF_JSON" in item for item in candidates):
             continue
         try:
-            value = json.loads(str(content).split("R1E_HANDOFF_JSON", 1)[-1].lstrip(" :"))
+            raw = next(item for item in candidates if "R1E_HANDOFF_JSON" in item)
+            value = json.loads(raw.split("R1E_HANDOFF_JSON", 1)[-1].lstrip(" :"))
         except json.JSONDecodeError:
             continue
         if not isinstance(value, dict):
