@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -187,7 +188,7 @@ class NL2KubectlAgent:
         memory = MemorySaver()
         self.graph = self.graph_builder.compile(checkpointer=memory)
 
-    def graph_step(self, user_input: str):
+    async def _agraph_step(self, user_input: str):
         if not self.graph:
             raise ValueError("Agent graph is None. Have you built the agent?")
         config = {"configurable": {"thread_id": "1"}}
@@ -205,9 +206,18 @@ class NL2KubectlAgent:
                 "curr_file": "",
                 "curr_line": 0,
             }
-        for event in self.graph.stream(
+        async for event in self.graph.astream(
             state,
             config=config,
             stream_mode="values",
         ):
             event["messages"][-1].pretty_print()
+
+    def graph_step(self, user_input: str):
+        """Run one graph turn from the synchronous campaign harness.
+
+        The kubectl node is intentionally asynchronous because it invokes MCP
+        tools. Keep the campaign API synchronous, but drive the graph through
+        its async stream instead of invoking an async node via ``stream``.
+        """
+        asyncio.run(self._agraph_step(user_input))
