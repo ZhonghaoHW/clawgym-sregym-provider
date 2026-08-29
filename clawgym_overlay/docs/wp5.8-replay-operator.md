@@ -27,3 +27,21 @@ Run case-001, case-002 and case-003 sequentially with the fixed seeds. A
 failed infrastructure attempt is retained and retried at most once with a new
 attempt identity; semantic Oracle failure is evidence, not permission to alter
 the environment or R1n.
+
+## Recovery after loss of the ECS worker
+
+The downloaded bundles are sufficient for offline audit, but they are not a
+portable live cluster. To execute a new episode, restore the exact Provider
+and ClawGym revisions, initialize recursive submodules, and materialize the
+committed deployment lock on a fresh Linux-amd64 host. The cache may be copied
+from a protected backup or re-downloaded from the lock's immutable sources;
+every manifest, chart and OCI image must pass its recorded digest check. Do
+not substitute a mutable image tag or a different Kind node image.
+
+Recreate Docker, Kind, kubectl, Helm, uv, the four-node Kind topology and the
+filtered kubeconfig/MCP setup, then inject the gateway key through a new
+`0600` secret file. The old readiness receipt only describes the old host and
+cannot be reused as proof for the new one. Run a new no-model readiness check,
+the E0 control, and then the three fixed R1n cases in order. Upload the new
+bundles to a new external archive and create fresh provenance/attestation
+sidecars; never reuse an attempt identity or the attestation private key.
