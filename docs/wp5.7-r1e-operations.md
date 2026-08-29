@@ -104,6 +104,26 @@ suite can expose stale helper assumptions that local collection cannot see;
 such failures must be fixed in the helper contract and replayed, never
 converted into skips or folded into R1n evidence.
 
+The subsequent ECS run exposed three more deterministic integration-fixture
+assumptions and their corrections:
+
+6. The mock LangGraph state returned fields that are not in the kubectl
+   `State` contract; the async tool node therefore failed with a missing
+   `curr_file`. The mock now returns only declared state and the harness drives
+   the async graph with `astream`.
+7. Campaign resource paths were interpreted relative to the caller's shell.
+   The integration subprocess now pins its cwd to the test package, making
+   fixture paths stable from every documented entry point.
+8. Smoke cleanup had removed the MCP ClusterRole/Binding before the kubectl
+   suite. The suite correctly failed closed on API `Forbidden`; restoring the
+   checked-in RBAC manifest and verifying `kubectl auth can-i` repaired the
+   host baseline without widening permissions.
+
+With the MCP port-forward and checked-in RBAC restored, ECS ran both kubectl
+campaigns end to end (`2 passed`), including real create/delete, patch and
+rollback operations. This is a live integration-gate result only; it is not
+new R1n evidence and does not alter the Oracle or any agent release.
+
 The Provider test contract is split into four explicit layers:
 
 ```text

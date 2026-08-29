@@ -76,6 +76,14 @@ testing the agent. Keep this helper in the integration layer and verify it
 with an offline regression; do not weaken production tool identity or hide the
 failure with a skip.
 
+Before running this suite on a restored worker, re-materialize the checked-in
+MCP ClusterRole and ClusterRoleBinding and verify the tool service account can
+perform the fixture operations in its test namespace. A missing binding or a
+stale port-forward is an infrastructure-gate failure, not an agent verdict.
+The fixture harness also pins its working directory and uses the async graph
+API required by the MCP tool node; these properties are part of the live test
+contract.
+
 The AgentAdapter boundary has two recurring invariants. A session identity is
 created once and passed unchanged through the transport, tool constructor and
 retry path. Test doubles must use real constructors (or a shared complete
