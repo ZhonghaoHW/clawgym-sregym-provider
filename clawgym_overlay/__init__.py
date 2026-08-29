@@ -7,6 +7,7 @@ from clawgym_overlay.release import (
     load_release_manifests,
     provider_configuration_digests,
 )
+from clawgym_overlay.provenance import ProviderProvenanceError, source_revision
 
 __all__ = [
     "MANIFEST_FILENAMES",
@@ -14,4 +15,6 @@ __all__ = [
     "build_environment_release",
     "load_release_manifests",
     "provider_configuration_digests",
+    "ProviderProvenanceError",
+    "source_revision",
 ]
