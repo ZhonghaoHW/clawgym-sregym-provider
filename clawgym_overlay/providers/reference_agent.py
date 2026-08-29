@@ -118,13 +118,25 @@ class SREGymReferenceAgentAdapter:
                 document=dict(execution.action_ledger),
             ))
         if execution.remediation_transaction is not None:
+            transaction_name = (
+                "sregym-remediation-transaction.v2.json"
+                if execution.remediation_transaction.get("schema_id")
+                == "clawgym.sregym_remediation_transaction.v2"
+                else "sregym-remediation-transaction.json"
+            )
             evidence.append(EvidencePayload(
-                artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-remediation-transaction.json",
+                artifact_key=f"runs/{run_manifest.manifest_digest}/{transaction_name}",
                 document=dict(execution.remediation_transaction),
             ))
         if execution.verification_observation is not None:
+            verification_name = (
+                "sregym-verification-observation.v2.json"
+                if execution.verification_observation.get("schema_id")
+                == "clawgym.sregym_verification_observation.v2"
+                else "sregym-verification-observation.json"
+            )
             evidence.append(EvidencePayload(
-                artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-verification-observation.json",
+                artifact_key=f"runs/{run_manifest.manifest_digest}/{verification_name}",
                 document=dict(execution.verification_observation),
             ))
         return AgentInvocationResult(
