@@ -27,6 +27,7 @@ _R1B_EXTRA = {"sop_variant", "bounded_execution", "config_bundle_digest"}
 _R1C_EXTRA = _R1B_EXTRA
 _R1D_EXTRA = _R1B_EXTRA
 _R1E_EXTRA = _R1B_EXTRA
+_R1F_EXTRA = _R1B_EXTRA
 
 
 def load_reference_agent_profile(
@@ -41,6 +42,7 @@ def load_reference_agent_profile(
         root / "agent.reference-stratus-r1c-deepseek.v1.json",
         root / "agent.reference-stratus-r1d.v1.json",
         root / "agent.reference-stratus-r1e.v1.json",
+        root / "agent.reference-stratus-r1f.v1.json",
     ]
     candidates = [candidate for candidate in candidates if candidate.is_file()]
     path = next(
@@ -135,6 +137,21 @@ def load_reference_agent_profile(
             raise ContractValidationError("R1e bounded execution policy is invalid")
         if not isinstance(document["config_bundle_digest"], str) or len(document["config_bundle_digest"]) != 64:
             raise ContractValidationError("R1e config bundle digest is invalid")
+    elif variant == "r1f-host-normalized-remediation-v1":
+        if document["model_id"] != "openai/deepseek-v4-pro":
+            raise ContractValidationError("R1f reference model must remain frozen")
+        if extra != _R1F_EXTRA:
+            raise ContractValidationError("R1f reference profile has invalid fields")
+        if document["command"] != ["python", "-m", "reference_driver_r1f"]:
+            raise ContractValidationError("R1f reference command is invalid")
+        if document["bounded_execution"] != {
+            "diagnosis_max_steps": 8,
+            "mitigation_max_steps": 8,
+            "container_timeout_seconds": 900,
+        }:
+            raise ContractValidationError("R1f bounded execution policy is invalid")
+        if not isinstance(document["config_bundle_digest"], str) or len(document["config_bundle_digest"]) != 64:
+            raise ContractValidationError("R1f config bundle digest is invalid")
     else:
         if extra and extra != {"sop_variant"}:
             raise ContractValidationError("reference agent profile has invalid fields")

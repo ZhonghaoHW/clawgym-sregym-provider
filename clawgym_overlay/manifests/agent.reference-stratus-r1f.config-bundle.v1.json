@@ -1,0 +1,10 @@
+{
+  "schema_id": "clawgym.sregym_reference_agent_config_bundle.v1",
+  "files": [
+    {"path": "reference-r1f/diagnosis_agent_config.yaml", "container_path": "/opt/sregym/clients/stratus/configs/diagnosis_agent_config.yaml", "sha256_digest": "fc475d37b37d94fcc19b69bbb8d89fe74e44eb6eb618f3c73a58ef464dd09224"},
+    {"path": "reference-r1f/mitigation_agent_config.yaml", "container_path": "/opt/sregym/clients/stratus/configs/mitigation_agent_config.yaml", "sha256_digest": "b92e63fa29bf82e2c5d61d69789557340bf55c0570c57692665f670e6d68a322"},
+    {"path": "reference-r1f/diagnosis_agent_prompts_r1f.yaml", "container_path": "/opt/sregym/clients/stratus/configs/diagnosis_agent_prompts_r1f.yaml", "sha256_digest": "f7754f484da4fa0ac1c78634ddea5ac5a7289646ef2bea25fc46c55bce885343"},
+    {"path": "reference-r1f/mitigation_agent_prompts_r1f.yaml", "container_path": "/opt/sregym/clients/stratus/configs/mitigation_agent_prompts_r1f.yaml", "sha256_digest": "842305660e8753142e01e2c7ab72fc5bceb10cadefbaff8db3fe8bea955fc648"}
+  ],
+  "bundle_digest": "8d41a0725ca2d788d8f9ab32be342df100ae8201e6ba4a583a33603e764490b6"
+}

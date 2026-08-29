@@ -126,3 +126,41 @@ def test_r1b_runner_mounts_only_registered_bounded_configuration(
     assert any("mitigation_agent_config.yaml:ro" in item for item in docker)
     assert docker[-2:] == ["-m", "reference_driver"]
     assert result.timeout_seconds == 900
+
+
+def test_r1f_runner_mounts_only_registered_host_normalized_configuration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    secret = tmp_path / "agent-key"
+    secret.write_text("not-a-real-key")
+    secret.chmod(0o600)
+    kubeconfig = tmp_path / "filtered-kubeconfig"
+    kubeconfig.write_text("safe")
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        if command[:3] == ["docker", "image", "inspect"]:
+            return SimpleNamespace(stdout="sha256:" + "c" * 64 + "\n")
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("clawgym_overlay.reference_runner.subprocess.run", fake_run)
+    from clawgym_overlay.reference_profiles import load_reference_agent_profile
+
+    root = Path(__file__).resolve().parents[2] / "clawgym_overlay" / "manifests"
+    profile = load_reference_agent_profile(
+        root,
+        profile_digest=sha256_digest(
+            json.loads((root / "agent.reference-stratus-r1f.v1.json").read_text())
+        ),
+    )
+    result = SafeStratusRunner(profile=profile, secret_file=secret)(
+        SimpleNamespace(manifest_digest="c" * 64), str(kubeconfig)
+    )
+    docker = calls[1]
+    assert "PYTHONPATH=/opt:/opt/clawgym_overlay:/opt/sregym" in docker
+    assert any("reference_driver_r1f.py:ro" in item for item in docker)
+    assert any("r1f_protocol.py:ro" in item for item in docker)
+    assert any("diagnosis_agent_config.yaml:ro" in item for item in docker)
+    assert docker[-2:] == ["-m", "reference_driver_r1f"]
+    assert result.timeout_seconds == 900

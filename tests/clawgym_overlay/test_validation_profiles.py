@@ -100,3 +100,13 @@ def test_reference_r1d_profile_is_protocol_bounded_and_explicitly_registered() -
     assert profile["sop_variant"] == "r1d-typed-remediation-v1"
     assert profile["command"] == ["python", "-m", "reference_driver_r1d"]
     assert profile["model_id"] == "openai/deepseek-v4-pro"
+
+
+def test_reference_r1f_profile_is_explicit_and_host_normalized() -> None:
+    path = MANIFESTS / "agent.reference-stratus-r1f.v1.json"
+    profile = load_reference_agent_profile(
+        MANIFESTS, profile_digest=sha256_digest(json.loads(path.read_text()))
+    )
+    assert profile["sop_variant"] == "r1f-host-normalized-remediation-v1"
+    assert profile["command"] == ["python", "-m", "reference_driver_r1f"]
+    assert profile["bounded_execution"]["mitigation_max_steps"] == 8

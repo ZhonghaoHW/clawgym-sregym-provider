@@ -16,6 +16,7 @@ from clawgym.contracts import RunManifest
 
 from clawgym_overlay.providers.reference_agent import ReferenceAgentExecution
 from clawgym_overlay.r1d_protocol import validate_handoff
+from clawgym_overlay.r1f_protocol import handoff_from_trajectory_records
 
 
 _SENSITIVE_OUTPUT = re.compile(
@@ -152,6 +153,16 @@ def _extract_r1e_handoff(records: tuple[dict[str, object], ...], run: RunManifes
             document["status"] = "incomplete"
             document["handoff_digest"] = _digest_document(document, "handoff_digest")
     return document
+
+
+def _extract_r1f_handoff(records: tuple[dict[str, object], ...], run: RunManifest) -> dict[str, object]:
+    """Replay the same structured tool-call normalization used by R1f runtime."""
+
+    return handoff_from_trajectory_records(
+        records,
+        run_manifest_digest=run.manifest_digest,
+        agent_release_digest=getattr(getattr(run, "agent_release", None), "agent_release_digest", ""),
+    )
 
 
 def _r1d_transaction(handoff: dict[str, object], ledger: dict[str, object], run: RunManifest) -> dict[str, object]:
@@ -391,6 +402,32 @@ def _r1e_config_mounts(profile: dict) -> list[str]:
     return mounts
 
 
+def _r1f_config_mounts(profile: dict) -> list[str]:
+    if profile.get("sop_variant") != "r1f-host-normalized-remediation-v1":
+        return []
+    root = Path(__file__).resolve().parent / "manifests"
+    bundle = json.loads((root / "agent.reference-stratus-r1f.config-bundle.v1.json").read_text(encoding="utf-8"))
+    actual = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in bundle.items() if key != "bundle_digest"},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode()
+    ).hexdigest()
+    if bundle.get("bundle_digest") != actual or profile.get("config_bundle_digest") != actual:
+        raise RuntimeError("R1f configuration bundle digest mismatch")
+    mounts = []
+    for item in bundle.get("files", []):
+        source = root / item["path"]
+        if not source.is_file() or source.is_symlink() or hashlib.sha256(source.read_bytes()).hexdigest() != item["sha256_digest"]:
+            raise RuntimeError("R1f configuration file digest mismatch")
+        mounts.append(f"{source.resolve()}:{item['container_path']}:ro")
+    if len(mounts) != 4:
+        raise RuntimeError("R1f configuration bundle is incomplete")
+    return mounts
+
+
 class SafeStratusRunner:
     """Run Stratus with only filtered Kubernetes access and one model credential."""
 
@@ -477,6 +514,17 @@ class SafeStratusRunner:
                 command[image_index:image_index] = ["-v", f"{overlay.resolve()}:/opt/clawgym_overlay/reference_driver_r1e.py:ro", "-v", f"{protocol.resolve()}:/opt/clawgym_overlay/r1e_protocol.py:ro", "-e", "PYTHONPATH=/opt:/opt/clawgym_overlay:/opt/sregym"]
                 image_index = command.index(image_id)
                 command[image_index:image_index] = sum((['-v', mount] for mount in _r1e_config_mounts(self._profile)), [])
+            elif self._profile.get("sop_variant") == "r1f-host-normalized-remediation-v1":
+                overlay = Path(__file__).resolve().parent / "reference_driver_r1f.py"
+                protocol = Path(__file__).resolve().parent / "r1f_protocol.py"
+                image_index = command.index(image_id)
+                command[image_index:image_index] = [
+                    "-v", f"{overlay.resolve()}:/opt/clawgym_overlay/reference_driver_r1f.py:ro",
+                    "-v", f"{protocol.resolve()}:/opt/clawgym_overlay/r1f_protocol.py:ro",
+                    "-e", "PYTHONPATH=/opt:/opt/clawgym_overlay:/opt/sregym",
+                ]
+                image_index = command.index(image_id)
+                command[image_index:image_index] = sum((['-v', mount] for mount in _r1f_config_mounts(self._profile)), [])
             try:
                 completed = subprocess.run(
                     command, capture_output=True, text=False, timeout=timeout_seconds, check=False
@@ -492,8 +540,9 @@ class SafeStratusRunner:
         duration_ms = int((time.monotonic() - started) * 1000)
         is_r1d = self._profile.get("sop_variant") == "r1d-typed-remediation-v1"
         is_r1e = self._profile.get("sop_variant") == "r1e-runtime-gated-v1"
-        handoff = _extract_r1e_handoff(trajectories, run_manifest) if is_r1e else (_extract_r1d_handoff(trajectories, run_manifest) if is_r1d else (_extract_r1c_handoff(trajectories, run_manifest) if self._profile.get("sop_variant") in {"r1c-structured-attribution-v1", "r1c-structured-attribution-deepseek-v1"} else None))
-        ledger = _extract_action_ledger(trajectories, run_manifest, schema_id="clawgym.sregym_agent_action_ledger.v2" if (is_r1d or is_r1e) else "clawgym.sregym_agent_action_ledger.v1") if is_r1d or is_r1e or self._profile.get("sop_variant") in {"r1c-structured-attribution-v1", "r1c-structured-attribution-deepseek-v1"} else None
+        is_r1f = self._profile.get("sop_variant") == "r1f-host-normalized-remediation-v1"
+        handoff = _extract_r1f_handoff(trajectories, run_manifest) if is_r1f else (_extract_r1e_handoff(trajectories, run_manifest) if is_r1e else (_extract_r1d_handoff(trajectories, run_manifest) if is_r1d else (_extract_r1c_handoff(trajectories, run_manifest) if self._profile.get("sop_variant") in {"r1c-structured-attribution-v1", "r1c-structured-attribution-deepseek-v1"} else None)))
+        ledger = _extract_action_ledger(trajectories, run_manifest, schema_id="clawgym.sregym_agent_action_ledger.v2" if (is_r1d or is_r1e or is_r1f) else "clawgym.sregym_agent_action_ledger.v1") if is_r1d or is_r1e or is_r1f or self._profile.get("sop_variant") in {"r1c-structured-attribution-v1", "r1c-structured-attribution-deepseek-v1"} else None
         return ReferenceAgentExecution(
             exit_code=exit_code,
             submission={"reference_agent": "stratus", "run_manifest_digest": run_manifest.manifest_digest},
@@ -506,6 +555,6 @@ class SafeStratusRunner:
             timeout_seconds=timeout_seconds,
             diagnosis_handoff=handoff,
             action_ledger=ledger,
-            remediation_transaction=_r1e_transaction(handoff, ledger, run_manifest) if is_r1e and handoff is not None and ledger is not None else (_r1d_transaction(handoff, ledger, run_manifest) if is_r1d and handoff is not None and ledger is not None else None),
-            verification_observation=_r1e_verification_observation(ledger, run_manifest) if is_r1e and ledger is not None else (_r1d_verification_observation(ledger, run_manifest) if is_r1d and ledger is not None else None),
+            remediation_transaction=_r1e_transaction(handoff, ledger, run_manifest) if (is_r1e or is_r1f) and handoff is not None and ledger is not None else (_r1d_transaction(handoff, ledger, run_manifest) if is_r1d and handoff is not None and ledger is not None else None),
+            verification_observation=_r1e_verification_observation(ledger, run_manifest) if (is_r1e or is_r1f) and ledger is not None else (_r1d_verification_observation(ledger, run_manifest) if is_r1d and ledger is not None else None),
         )

@@ -1,0 +1,21 @@
+system: |
+  Diagnose with read-only tools, then submit exactly one R1F_HANDOFF_JSON.
+  The trusted host adds status, identities and digests; do not invent them.
+  candidate_resource must be this JSON object exactly:
+  {"kind":"NetworkPolicy","namespace":"hotel-reservation","name":"deny-all-recommendation"}.
+  Include non-empty symptom, target_component, evidence,
+  root_cause_hypothesis, minimal_remediation and verification_plan.
+user: |
+  You will be working this application: {app_name}
+
+  Application description:
+  {app_description}
+
+  Namespace: {app_namespace}
+
+  Use only read-only tools. You have at most {max_step} rounds. Once evidence
+  establishes the root cause, call submit_tool with R1F_HANDOFF_JSON followed
+  by one JSON object. candidate_resource must be the exact object stated in
+  the system instruction. Do not mutate resources during diagnosis.
+diagnosis_summary_prompt: |
+  Return only the canonical host-validated handoff supplied by the adapter.
