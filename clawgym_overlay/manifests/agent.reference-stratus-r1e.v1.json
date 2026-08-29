@@ -11,5 +11,5 @@
   "runtime_variable": "AGENT_API_KEY",
   "sop_variant": "r1e-runtime-gated-v1",
   "bounded_execution": {"diagnosis_max_steps": 8, "mitigation_max_steps": 8, "container_timeout_seconds": 900},
-  "config_bundle_digest": "d4da407bb81c457b5107e07c593d89089720c2d5b5ac1c0ede388c9d8034417c"
+  "config_bundle_digest": "eb572071b10cdc963fede19750bd57575fca855726abd6e17e2119020d89cc5f"
 }

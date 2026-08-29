@@ -4,3 +4,20 @@ system: |
   read-only: do not mutate anything. Include symptom, target_component,
   evidence, root_cause_hypothesis, candidate_resource, minimal_remediation,
   and verification_plan. Never invent a target or use a transcript tail.
+user: |
+  You will be working this application: {app_name}
+
+  Application description:
+  {app_description}
+
+  Namespace: {app_namespace}
+
+  Diagnose the incident using only read-only tools. You have at most {max_step}
+  rounds. Before the seventh round submit exactly one structured marker in the
+  form R1E_HANDOFF_JSON followed by JSON containing symptom, target_component,
+  evidence, root_cause_hypothesis, candidate_resource, minimal_remediation,
+  and verification_plan. The candidate_resource must be the exact
+  NetworkPolicy/hotel-reservation/deny-all-recommendation target. Do not mutate
+  resources during diagnosis.
+diagnosis_summary_prompt: |
+  Summarize only the explicit diagnosis evidence and root-cause hypothesis.

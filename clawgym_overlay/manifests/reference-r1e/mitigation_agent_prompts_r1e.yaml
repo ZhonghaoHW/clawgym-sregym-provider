@@ -5,3 +5,23 @@ system: |
   policy, then reread it and confirm NotFound. Read the recommendation endpoint
   and confirm a ready address before submitting. No other mutation, compound
   command, deletion, namespace, or resource is allowed.
+user: |
+  You will be working this application: {app_name}
+
+  Application description:
+  {app_description}
+
+  Namespace: {app_namespace}
+
+  Validated diagnosis handoff:
+  {faults_info}
+
+  Use at most {max_step} rounds. Follow the handoff and perform the bounded
+  sequence: read the exact NetworkPolicy and selector, issue exactly one
+  explicit delete for that policy, reread it to confirm NotFound, read the
+  recommendation endpoint until a ready address is observed, then call
+  f_submit_tool. Do not perform any other mutation or submit early.
+retry_user: |
+  Re-check the validated handoff and continue the same bounded remediation
+  sequence. Last result: {last_result}
+  Reflection: {reflection}
