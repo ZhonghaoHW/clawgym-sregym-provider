@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+from langgraph.types import Command
+
 from clawgym_overlay.r1f_protocol import (
     R1fGate,
     TARGET,
@@ -132,7 +134,7 @@ def test_gate_requires_exact_single_delete_and_verification() -> None:
     assert gate.may_submit
 
 
-def test_runtime_submit_hook_normalises_before_conductor_transition(monkeypatch) -> None:
+def test_runtime_submit_hook_normalises_without_triggering_conductor(monkeypatch) -> None:
     import clawgym_overlay.reference_driver_r1f as driver
 
     observed: dict[str, object] = {}
@@ -152,8 +154,8 @@ def test_runtime_submit_hook_normalises_before_conductor_transition(monkeypatch)
         driver._gated_diagnosis_submit(_attempt10_style_submission(), {"num_steps": 4}, "call-1")
     )
 
-    assert result == "submitted"
-    assert str(observed["ans"]).startswith("R1F_HANDOFF_JSON {")
+    assert isinstance(result, Command)
+    assert not observed
     assert driver._handoff is not None
     assert driver._handoff["status"] == "complete"
     assert driver._gate.handoff_validated

@@ -9,7 +9,7 @@ import os
 from clients.stratus.stratus_agent.diagnosis_agent import DiagnosisAgent
 from clients.stratus.stratus_agent.driver import driver
 from clients.stratus.tools.kubectl_tools import ExecKubectlCmdSafely
-from clients.stratus.tools.submit_tool import fake_submit_tool, manual_submit_tool, submit_tool
+from clients.stratus.tools.submit_tool import fake_submit_tool, submit_tool
 from clawgym_overlay.r1f_protocol import (
     MARKER,
     R1fGate,
@@ -42,9 +42,6 @@ def _canonical_text(document: dict[str, object]) -> str:
 
 async def _incomplete_submit(self, state):
     run_digest, release_digest = _identities()
-    await manual_submit_tool(ans=_canonical_text(incomplete_handoff(
-        run_manifest_digest=run_digest, agent_release_digest=release_digest
-    )))
     return {"submitted": True, "messages": [HumanMessage("R1f incomplete handoff submitted.")]}
 
 
@@ -57,11 +54,8 @@ async def _gated_diagnosis_submit(ans: str, state, tool_call_id: str) -> Command
     if document is None:
         _handoff_rejections += 1
         if _handoff_rejections > 1:
-            await manual_submit_tool(ans=_canonical_text(incomplete_handoff(
-                run_manifest_digest=run_digest, agent_release_digest=release_digest
-            )))
             return Command(update={"submitted": True, "messages": [ToolMessage(
-                content="R1f handoff rejected twice; submitting explicit incomplete marker.",
+                content="R1f handoff rejected twice; recording explicit incomplete marker.",
                 tool_call_id=tool_call_id,
             )]})
         return Command(update={
@@ -76,9 +70,15 @@ async def _gated_diagnosis_submit(ans: str, state, tool_call_id: str) -> Command
         })
     _handoff = document
     _gate.handoff_validated = True
-    return await _original_diagnosis_submit(
-        ans=_canonical_text(document), state=state, tool_call_id=tool_call_id
-    )
+    # Diagnosis handoff is an adapter-internal event.  Calling the upstream
+    # submit tool here would trigger the single-stage SREGym Oracle before the
+    # mitigation agent can execute its gated mutation and verification.  Mark
+    # the diagnosis stage submitted locally; the existing driver then observes
+    # the already-active mitigation stage and starts the mitigation agent.  The
+    # real conductor submission remains exclusively in _gated_submit.
+    return Command(update={"submitted": True, "messages": [ToolMessage(
+        content="R1f handoff accepted by host; continue to mitigation.", tool_call_id=tool_call_id
+    )]})
 
 
 def _handoff_projection(_last_state, _prompt):
