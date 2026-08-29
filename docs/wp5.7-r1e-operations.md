@@ -51,3 +51,22 @@ through the same declared AgentAdapter lifecycle and export identity-bound
 receipts. They may not add permissions, load candidate executables, patch
 upstream SREGym files or self-report the Oracle verdict. These constraints are
 the provider-side contract for the later independent ZeroClaw adapter.
+
+## WP5.8 restart replay observed on ECS (2026-08-30)
+
+The R1n runtime was replayed at the pinned Provider revision
+`164f4924a99f98042adfd50a39772d1a0ed4f6ff`, with the no-model readiness
+receipt and deterministic E0 control completed first. The three fixed runs used
+the same E0 and seeds and were executed sequentially. Each invocation produced
+a complete v2 handoff, exactly one delete of
+`NetworkPolicy/hotel-reservation/deny-all-recommendation`, a target-absent
+reread, a ready recommendation endpoint and a host-authoritative Oracle
+`pass`; recovery and cleanup also succeeded. No provider source or release
+was changed during replay.
+
+The retained bundles and their source-bound provenance/attestation sidecars
+are outside Git in the operator archive. This run confirms the provider's
+runtime and observation contract is reusable on a restored worker; it does not
+establish cross-agent conformance, change R0 or authorize environment
+evolution. The final worker check found all four Kind nodes Ready, no test
+namespace, no agent container and no temporary transfer archive.
