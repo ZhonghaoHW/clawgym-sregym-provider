@@ -39,6 +39,23 @@ def test_attempt10_style_multiline_submission_normalises_to_host_bound_handoff()
     assert handoff["agent_release_digest"] == RELEASE
 
 
+def test_real_r1f_submission_with_narrative_evidence_normalises() -> None:
+    submission = _attempt10_style_submission().replace(
+        '["policy denies ingress and egress"]', '"policy denies ingress and egress"'
+    ).replace(
+        '["reread the policy", "read recommendation endpoints"]',
+        '"reread the policy and read recommendation endpoints"',
+    )
+    handoff = normalise_handoff_submission(
+        submission, run_manifest_digest=RUN, agent_release_digest=RELEASE
+    )
+    assert handoff is not None
+    assert handoff["evidence"] == ["policy denies ingress and egress"]
+    assert handoff["verification_plan"] == [
+        "reread the policy and read recommendation endpoints"
+    ]
+
+
 def test_handoff_rejects_non_target_or_missing_semantic_evidence() -> None:
     wrong_target = _attempt10_style_submission().replace(
         "NetworkPolicy/hotel-reservation/deny-all-recommendation",

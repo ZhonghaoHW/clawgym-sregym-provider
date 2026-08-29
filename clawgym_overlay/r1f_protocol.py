@@ -68,6 +68,25 @@ def _normalise_target(value: object) -> dict[str, str] | None:
     return None
 
 
+def _normalise_evidence_list(value: object) -> list[str] | None:
+    """Accept model-friendly text or a JSON string list, retain canonical lists.
+
+    The published v2 handoff schema represents evidence and verification steps
+    as arrays.  The R1f prompt asked for semantic fields but did not require a
+    particular JSON container; DeepSeek consequently produced one useful
+    narrative string for each field.  This adapter boundary owns that harmless
+    representation conversion, while still rejecting empty or non-text items.
+    """
+
+    if isinstance(value, str):
+        item = value.strip()
+        return [item] if item else None
+    if not isinstance(value, list):
+        return None
+    items = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+    return items if len(items) == len(value) and items else None
+
+
 def normalise_handoff_submission(
     submission: str,
     *,
@@ -81,13 +100,13 @@ def normalise_handoff_submission(
         return None
     target = _normalise_target(value["candidate_resource"])
     text_fields = ("symptom", "target_component", "root_cause_hypothesis", "minimal_remediation")
+    evidence = _normalise_evidence_list(value["evidence"])
+    verification_plan = _normalise_evidence_list(value["verification_plan"])
     if (
         target is None
         or not all(isinstance(value[field], str) and value[field].strip() for field in text_fields)
-        or not isinstance(value["evidence"], list)
-        or not value["evidence"]
-        or not isinstance(value["verification_plan"], list)
-        or not value["verification_plan"]
+        or evidence is None
+        or verification_plan is None
     ):
         return None
     document: dict[str, object] = {
@@ -97,11 +116,11 @@ def normalise_handoff_submission(
         "agent_release_digest": agent_release_digest,
         "symptom": value["symptom"].strip(),
         "target_component": value["target_component"].strip(),
-        "evidence": value["evidence"],
+        "evidence": evidence,
         "root_cause_hypothesis": value["root_cause_hypothesis"].strip(),
         "candidate_resource": target,
         "minimal_remediation": value["minimal_remediation"].strip(),
-        "verification_plan": value["verification_plan"],
+        "verification_plan": verification_plan,
     }
     document["handoff_digest"] = _digest(document, "handoff_digest")
     return document
