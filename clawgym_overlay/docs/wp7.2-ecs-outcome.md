@@ -26,7 +26,7 @@ change requires a new immutable candidate and a new approval; this historical
 attempt remains immutable evidence.
 ## Protocol repair candidate (2026-08-30)
 
-Provider `f0a0a79ef19a987266ea683a0365cd90fa5190dd` separates the immutable
+Provider `d441905dabf053c80c986c3403c256832fe08df3` separates the immutable
 runtime protocol from the descriptive SOP variant. Materialized profiles now
 pin `r1i-typed-handoff-journal-v1` and accept a complete, exact seven-field
 structured `submit_tool.ans` JSON object without a transcript marker; the
