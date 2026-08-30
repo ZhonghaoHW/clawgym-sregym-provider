@@ -86,7 +86,7 @@ def materialize_reference_profile(*, proposal_path: str | Path, component_bundle
         raise MaterializationError("proposal/component/parent identity mismatch")
     if parent.get("schema_id") not in {"clawgym.sregym_reference_agent_profile.v1", "clawgym.sregym_reference_agent_profile.v2"}:
         raise MaterializationError("parent profile schema is not a Reference profile")
-    if set(parent) - {"schema_id", "adapter_id", "lane", "agent", "artifact_id", "model_id", "api_base", "command", "runtime_injection", "runtime_variable", "sop_variant", "bounded_execution", "config_bundle_digest", "agent_release_digest", "tool_policy_profile_bundle_digest"}:
+    if set(parent) - {"schema_id", "adapter_id", "lane", "agent", "artifact_id", "model_id", "api_base", "command", "runtime_injection", "runtime_variable", "sop_variant", "bounded_execution", "config_bundle_digest", "agent_release_digest", "tool_policy_profile_bundle_digest", "profile_digest", "runtime_protocol", "handoff_argument_protocol"}:
         raise MaterializationError("parent profile contains unsupported fields")
     for field in _FIXED:
         if field not in parent:
