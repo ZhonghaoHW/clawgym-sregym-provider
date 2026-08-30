@@ -524,13 +524,57 @@ def _r1i_config_mounts(profile: dict) -> list[str]:
     return mounts
 
 
+def _materialized_config_mounts(profile: dict, bundle_root: str | Path) -> list[str]:
+    """Validate and mount a declarative materialization bundle read-only.
+
+    Materialized profiles are deliberately not looked up by profile name.  The
+    bundle path is supplied by the host worker and every file is bound to the
+    digest declared by its config manifest before it can enter the container.
+    """
+    root = Path(bundle_root).resolve()
+    if not root.is_dir() or root.is_symlink():
+        raise RuntimeError("materialization bundle root is unavailable")
+    bundle_path = root / "config-bundle.json"
+    if not bundle_path.is_file() or bundle_path.is_symlink():
+        raise RuntimeError("materialization config bundle is unavailable")
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    unsigned = {key: value for key, value in bundle.items() if key != "config_bundle_digest"}
+    actual = hashlib.sha256(
+        json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+    expected = bundle.get("config_bundle_digest")
+    if expected != actual or profile.get("config_bundle_digest") != actual:
+        raise RuntimeError("materialized configuration bundle digest mismatch")
+    mounts: list[str] = []
+    for item in bundle.get("files", []):
+        if not isinstance(item, dict):
+            raise RuntimeError("materialized configuration file entry is invalid")
+        relative = item.get("path")
+        target = item.get("container_path")
+        declared = item.get("sha256_digest")
+        if not isinstance(relative, str) or not relative.startswith("reference-materialized/"):
+            raise RuntimeError("materialized configuration path is invalid")
+        source = (root / relative).resolve()
+        if source.parent != (root / "reference-materialized").resolve() or not source.is_file() or source.is_symlink():
+            raise RuntimeError("materialized configuration file is invalid")
+        if hashlib.sha256(source.read_bytes()).hexdigest() != declared:
+            raise RuntimeError("materialized configuration file digest mismatch")
+        if not isinstance(target, str) or not target.startswith("/opt/sregym/clients/stratus/configs/") or target.endswith("/"):
+            raise RuntimeError("materialized configuration target is invalid")
+        mounts.append(f"{source}:{target}:ro")
+    if len(mounts) != 4:
+        raise RuntimeError("materialized configuration bundle is incomplete")
+    return mounts
+
+
 class SafeStratusRunner:
     """Run Stratus with only filtered Kubernetes access and one model credential."""
 
-    def __init__(self, *, profile: dict, secret_file: str | Path, image: str = "sregym-agent-base:latest"):
+    def __init__(self, *, profile: dict, secret_file: str | Path, image: str = "sregym-agent-base:latest", materialization_bundle: str | Path | None = None):
         self._profile = profile
         self._secret_file = Path(secret_file)
         self._image = image
+        self._materialization_bundle = Path(materialization_bundle) if materialization_bundle else None
 
     def __call__(self, run_manifest: RunManifest, filtered_kubeconfig_path: str) -> ReferenceAgentExecution:
         kubeconfig = Path(filtered_kubeconfig_path)
@@ -611,7 +655,7 @@ class SafeStratusRunner:
                 command[image_index:image_index] = ["-v", f"{overlay.resolve()}:/opt/clawgym_overlay/reference_driver_r1e.py:ro", "-v", f"{protocol.resolve()}:/opt/clawgym_overlay/r1e_protocol.py:ro", "-e", "PYTHONPATH=/opt:/opt/clawgym_overlay:/opt/sregym"]
                 image_index = command.index(image_id)
                 command[image_index:image_index] = sum((['-v', mount] for mount in _r1e_config_mounts(self._profile)), [])
-            elif self._profile.get("sop_variant") in {"r1f-host-normalized-remediation-v1", "r1i-typed-handoff-journal-v1"}:
+            elif self._profile.get("sop_variant") in {"r1f-host-normalized-remediation-v1", "r1i-typed-handoff-journal-v1", "materialized-reference-v1"}:
                 overlay = Path(__file__).resolve().parent / "reference_driver_r1f.py"
                 protocol = Path(__file__).resolve().parent / "r1f_protocol.py"
                 image_index = command.index(image_id)
@@ -621,7 +665,12 @@ class SafeStratusRunner:
                     "-e", "PYTHONPATH=/opt:/opt/clawgym_overlay:/opt/sregym",
                 ]
                 image_index = command.index(image_id)
-                mounts = _r1i_config_mounts(self._profile) if is_r1i else _r1f_config_mounts(self._profile)
+                if self._profile.get("sop_variant") == "materialized-reference-v1":
+                    if self._materialization_bundle is None:
+                        raise RuntimeError("materialized profile requires an explicit bundle")
+                    mounts = _materialized_config_mounts(self._profile, self._materialization_bundle)
+                else:
+                    mounts = _r1i_config_mounts(self._profile) if is_r1i else _r1f_config_mounts(self._profile)
                 command[image_index:image_index] = sum((['-v', mount] for mount in mounts), [])
             try:
                 completed = subprocess.run(

@@ -166,6 +166,82 @@ def test_r1f_runner_mounts_only_registered_host_normalized_configuration(
     assert result.timeout_seconds == 900
 
 
+def test_materialized_runner_mounts_explicit_bundle_and_reference_driver(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    secret = tmp_path / "agent-key"
+    secret.write_text("not-a-real-key")
+    secret.chmod(0o600)
+    kubeconfig = tmp_path / "filtered-kubeconfig"
+    kubeconfig.write_text("safe")
+    bundle_root = tmp_path / "materialized"
+    files_root = bundle_root / "reference-materialized"
+    files_root.mkdir(parents=True)
+    entries = []
+    for name in (
+        "diagnosis_agent_config.yaml",
+        "diagnosis_agent_prompts.yaml",
+        "mitigation_agent_config.yaml",
+        "mitigation_agent_prompts.yaml",
+    ):
+        content = f"{name}: safe\n".encode()
+        path = files_root / name
+        path.write_bytes(content)
+        entries.append(
+            {
+                "path": f"reference-materialized/{name}",
+                "container_path": f"/opt/sregym/clients/stratus/configs/{name}",
+                "sha256_digest": __import__("hashlib").sha256(content).hexdigest(),
+                "bytes": len(content),
+            }
+        )
+    import hashlib
+
+    config = {
+        "schema_id": "clawgym.sregym_reference_agent_config_bundle.v2",
+        "component_bundle_digest": "a" * 64,
+        "semantic_component_digest": "b" * 64,
+        "diagnosis_step_limit": 8,
+        "mitigation_step_limit": 8,
+        "components": {},
+        "files": entries,
+    }
+    config["config_bundle_digest"] = hashlib.sha256(
+        json.dumps(config, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+    (bundle_root / "config-bundle.json").write_text(
+        json.dumps(config, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        if command[:3] == ["docker", "image", "inspect"]:
+            return SimpleNamespace(stdout="sha256:" + "d" * 64 + "\n")
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("clawgym_overlay.reference_runner.subprocess.run", fake_run)
+    profile = {
+        "model_id": "openai/deepseek-v4-pro",
+        "api_base": "https://example.invalid/v1",
+        "artifact_id": "network_policy_block",
+        "command": ["python", "-m", "reference_driver_r1f"],
+        "sop_variant": "materialized-reference-v1",
+        "config_bundle_digest": config["config_bundle_digest"],
+        "bounded_execution": {"container_timeout_seconds": 900},
+    }
+    result = SafeStratusRunner(
+        profile=profile, secret_file=secret, materialization_bundle=bundle_root
+    )(SimpleNamespace(manifest_digest="d" * 64), str(kubeconfig))
+    docker = calls[1]
+    assert "PYTHONPATH=/opt:/opt/clawgym_overlay:/opt/sregym" in docker
+    assert any("reference_driver_r1f.py:ro" in item for item in docker)
+    assert any("r1f_protocol.py:ro" in item for item in docker)
+    assert sum("diagnosis_agent_config.yaml:ro" in item for item in docker) == 1
+    assert docker[-2:] == ["-m", "reference_driver_r1f"]
+    assert result.image_digest == "d" * 64
+
+
 def test_r1i_runner_mounts_typed_handoff_journal_configuration(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

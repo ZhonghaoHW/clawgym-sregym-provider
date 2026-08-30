@@ -153,10 +153,14 @@ def execute(args: argparse.Namespace) -> None:
             raise ValueError("AgentRelease does not identify the frozen invocation profile")
         if not args.agent_secret_file:
             raise ValueError("WP5 reference worker requires --agent-secret-file")
-        adapter = SREGymReferenceAgentAdapter(
-            sha256_digest(profile),
-            SafeStratusRunner(profile=profile, secret_file=args.agent_secret_file),
-        )
+            adapter = SREGymReferenceAgentAdapter(
+                sha256_digest(profile),
+                SafeStratusRunner(
+                    profile=profile,
+                    secret_file=args.agent_secret_file,
+                    materialization_bundle=args.materialization_bundle,
+                ),
+            )
     else:
         adapter = SREGymEnvironmentValidationAdapter(
             sha256_digest(adapter_profile),
