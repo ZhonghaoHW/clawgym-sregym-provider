@@ -66,3 +66,18 @@ This is an infrastructure block, not a candidate result. A future retry
 requires verified offline Helm dependencies or restored network access without
 changing the pinned Provider runtime; the WP7.3 matrix must remain stopped
 until E0 completes.
+
+## Paired rerun (2026-08-31)
+
+After E0 readiness was restored, the fixed three-case control/candidate matrix
+ran sequentially on Provider `f33c61118bc8aa8de93b96a7ad944386c8bbba15`.
+All six admitted executions passed typed handoff, one exact NetworkPolicy
+mutation, target and endpoint verification, Oracle `pass`, recovery and
+cleanup. Control case-002 attempt1 remains a reset-stage infrastructure block;
+only its pre-authorized distinct-claim attempt2 is admitted. The external
+archive is
+`/Users/elizhong/Documents/project/_artifacts/wp7-reference-evolution/wp73/ecs-paired-action-efficiency-v4/remote-formal-final-20260831`.
+Offline aggregation measured 83 control actions versus 63 candidate actions
+(24.10% lower). This is a same-family efficiency observation only; it is not
+cross-agent conformance or automatic promotion. Final ECS state had four Ready
+nodes, baseline namespaces only, no agent containers and secret mode 0600.
