@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import stat
 import threading
 from pathlib import Path
 
@@ -70,6 +71,28 @@ def verify_release_revisions(
         raise ValueError("validation AgentRelease does not identify the provider checkout")
 
 
+def prepare_runtime_workdir(path: str | Path) -> Path:
+    """Create a per-attempt private temp root before importing SREGym."""
+
+    root = Path(path)
+    if root.exists():
+        if root.is_symlink() or not root.is_dir() or any(root.iterdir()):
+            raise ValueError("runtime workdir must be a new empty directory")
+    else:
+        root.mkdir(parents=True, mode=0o700)
+    os.chmod(root, 0o700)
+    mode = stat.S_IMODE(root.stat().st_mode)
+    if mode != 0o700 or not os.access(root, os.W_OK | os.X_OK):
+        raise ValueError("runtime workdir is not private and writable")
+    os.environ["TMPDIR"] = str(root)
+    # tempfile caches the result on first use; set it explicitly as a guard
+    # against imports performed before the conductor is constructed.
+    import tempfile
+
+    tempfile.tempdir = str(root)
+    return root
+
+
 def execute(args: argparse.Namespace) -> None:
     provider_root = Path(args.provider_checkout).resolve(strict=True)
     clawgym_root = Path(args.clawgym_checkout).resolve(strict=True)
@@ -77,6 +100,11 @@ def execute(args: argparse.Namespace) -> None:
     verify_source_checkout(clawgym_root, args.clawgym_revision)
 
     run_document = _read_json(args.run_manifest)
+    run_id = run_document.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        raise ValueError("run manifest must contain a run_id")
+    runtime_workdir = args.runtime_workdir or str(Path(args.evidence_root).resolve().parent / f".runtime-{run_id}")
+    prepare_runtime_workdir(runtime_workdir)
     agent_document = _read_json(args.agent_release)
     environment_document = _read_json(args.environment_release)
     approval_document = _read_json(args.approval) if getattr(args, "approval", None) else None
@@ -88,6 +116,8 @@ def execute(args: argparse.Namespace) -> None:
     candidate_document = _read_json(args.candidate) if getattr(args, "candidate", None) else None
     receipt_document = _read_json(args.materialization_receipt) if getattr(args, "materialization_receipt", None) else None
     parent_document = _read_json(args.parent_agent_release) if getattr(args, "parent_agent_release", None) else None
+    readiness_attestation_document = _read_json(args.readiness_attestation) if getattr(args, "readiness_attestation", None) else None
+    e0_agent_release_document = _read_json(args.e0_agent_release) if getattr(args, "e0_agent_release", None) else None
     verify_release_revisions(agent_document, environment_document, args.provider_revision)
 
     from sregym.conductor.conductor import Conductor, ConductorConfig
@@ -238,6 +268,9 @@ def execute(args: argparse.Namespace) -> None:
                 attempt_request_document=attempt_request_document,
                 attempt_ledger_document=attempt_ledger_document,
                 attempt_claim_document=claim,
+                readiness_attestation_document=readiness_attestation_document,
+                e0_agent_release_document=e0_agent_release_document,
+                expected_clawgym_revision=args.clawgym_revision,
             )
         else:
             result = execute_worker(
@@ -279,6 +312,9 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--attempt-request")
     command.add_argument("--attempt-ledger")
     command.add_argument("--attempt-claim-root")
+    command.add_argument("--runtime-workdir")
+    command.add_argument("--readiness-attestation")
+    command.add_argument("--e0-agent-release")
     command.set_defaults(handler=execute)
     return result
 

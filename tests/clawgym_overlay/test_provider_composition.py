@@ -270,6 +270,10 @@ def test_failed_phase_postcondition_fails_receipt() -> None:
         "diagnostic": "safe-fault-state",
         "reason": "postcondition_failed",
     }
+    diagnostic = outcome.evidence[1].document
+    assert diagnostic["schema_id"] == "clawgym.execution_diagnostic.v1"
+    assert diagnostic["failure_code"] == "provider_unclassified"
+    assert "safe-fault-state" not in str(diagnostic)
 
 
 def test_validation_adapter_is_no_model_and_lane_restricted() -> None:

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from clawgym.contracts import RunManifest
+from clawgym.contracts import RunManifest, sha256_digest
 from clawgym.providers import (
     AgentInvocationResult,
     EvidencePayload,
@@ -105,6 +105,46 @@ class SREGymEnvironmentProvider:
         self.conductor.config.defer_cleanup = True
         self.conductor.config.task_stages = self.task_stages
 
+    @staticmethod
+    def _diagnostic_code(phase: str, probe: Mapping[str, Any], result: Any) -> tuple[str, str]:
+        """Map a failed host check to a fixed, redacted dependency category."""
+        reasons = probe.get("abort_reasons", ()) if isinstance(probe, Mapping) else ()
+        if "kind-node-not-ready" in reasons:
+            return "cluster_not_ready", "cluster"
+        if "telemetry-unavailable" in reasons:
+            return "telemetry_unavailable", "telemetry"
+        if phase == "reset" and probe.get("connectivity_healthy") is not True:
+            return "baseline_connectivity_unhealthy", "connectivity"
+        if isinstance(result, Mapping) and result.get("status") in {"not_loaded", "failed"}:
+            return "provider_bootstrap_failed", "provider"
+        return "provider_unclassified", "provider"
+
+    def _failure_evidence(
+        self, phase: str, run_manifest: RunManifest, probe: Mapping[str, Any], result: Any
+    ) -> EvidencePayload:
+        failure_code, dependency_class = self._diagnostic_code(phase, probe, result)
+        checks = []
+        for key in ("nodes_ready", "application_ready", "connectivity_healthy", "fault_present"):
+            if key in probe:
+                checks.append({"check_id": key.replace("_", "."), "passed": probe[key] is True})
+        if not checks:
+            checks.append({"check_id": "provider.postcondition", "passed": False})
+        diagnostic = {
+            "schema_id": "clawgym.execution_diagnostic.v1",
+            "run_manifest_digest": run_manifest.manifest_digest,
+            "agent_release_digest": getattr(getattr(run_manifest, "agent_release", None), "agent_release_digest", "0" * 64),
+            "environment_release_digest": getattr(getattr(run_manifest, "environment_release", None), "environment_release_digest", "0" * 64),
+            "phase": phase,
+            "failure_code": failure_code,
+            "dependency_class": dependency_class,
+            "checks": checks,
+        }
+        diagnostic["diagnostic_digest"] = sha256_digest(diagnostic)
+        return EvidencePayload(
+            artifact_key=f"runs/{run_manifest.manifest_digest}/execution-diagnostic-{phase}.json",
+            document=diagnostic,
+        )
+
     def _call(self, phase: str, run_manifest: RunManifest, operation) -> LifecycleOutcome:
         started_at = self.clock()
         result = operation()
@@ -120,6 +160,9 @@ class SREGymEnvironmentProvider:
         failed = probe["passed"] is not True or status_value in {"cleanup_failed", "failed", "not_loaded"} or status_value.startswith(
             "skipped"
         )
+        extra_evidence: tuple[EvidencePayload, ...] = ()
+        if failed:
+            extra_evidence = (self._failure_evidence(phase, run_manifest, probe, result),)
         return _outcome(
             phase=phase,
             provider_id=self.provider_id,
@@ -132,6 +175,7 @@ class SREGymEnvironmentProvider:
                 "result": status_value,
                 "postconditions": dict(probe),
             },
+            extra_evidence=extra_evidence,
         )
 
     def reset(self, run_manifest: RunManifest) -> LifecycleOutcome:

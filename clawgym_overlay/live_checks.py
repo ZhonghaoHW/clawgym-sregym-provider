@@ -109,7 +109,68 @@ class SREGymLivePhaseProbe:
     def _connectivity_healthy(self) -> bool:
         return bool(self.conductor.current_problem.mitigation_oracle._run_recommendation_probe())
 
-    def _baseline_connectivity(self) -> tuple[bool, int]:
+    def _baseline_connectivity_diagnostic(self, probe_healthy: bool) -> Mapping[str, Any]:
+        """Return a redacted, read-only explanation of baseline probe state.
+
+        The upstream oracle intentionally returns only a boolean.  That is the
+        right authority for the verdict, but it made an infrastructure failure
+        impossible to distinguish from an application failure.  This summary
+        queries only Kubernetes objects and exports identities/counts/digests;
+        it never includes paths, command output, exception text or credentials.
+        """
+        core = self.conductor.kubectl.core_v1_api
+        problem = self.conductor.current_problem
+        target_service = getattr(problem, "faulty_service", "recommendation")
+        frontend_service = getattr(getattr(problem, "app", None), "frontend_service", "frontend")
+
+        def service_summary(name: str) -> dict[str, Any]:
+            try:
+                service = core.read_namespaced_service(name=name, namespace=self.namespace)
+            except Exception:  # safe category only; never export exception text
+                return {"exists": False, "read_status": "error"}
+            ports = tuple(
+                int(port.port)
+                for port in (getattr(getattr(service, "spec", None), "ports", None) or [])
+                if isinstance(getattr(port, "port", None), int)
+            )
+            selector = dict(getattr(getattr(service, "spec", None), "selector", None) or {})
+            return {
+                "exists": True,
+                "ports": list(ports),
+                "selector_present": bool(selector),
+                "selector_digest": sha256_digest(selector),
+            }
+
+        def endpoint_summary(name: str) -> dict[str, Any]:
+            try:
+                endpoints = core.read_namespaced_endpoints(name=name, namespace=self.namespace)
+            except Exception:  # safe category only; never export exception text
+                return {"exists": False, "read_status": "error"}
+            subsets = getattr(endpoints, "subsets", None) or []
+            ready = sum(len(getattr(subset, "addresses", None) or []) for subset in subsets)
+            not_ready = sum(len(getattr(subset, "not_ready_addresses", None) or []) for subset in subsets)
+            return {"exists": True, "ready_address_count": ready, "not_ready_address_count": not_ready}
+
+        try:
+            deployment = self.conductor.kubectl.get_deployment(target_service, self.namespace)
+            selector = getattr(getattr(deployment, "spec", None), "selector", None)
+            deployment_status = {
+                "desired_replicas": int(getattr(getattr(deployment, "spec", None), "replicas", 0) or 0),
+                "ready_replicas": int(getattr(getattr(deployment, "status", None), "ready_replicas", 0) or 0),
+                "selector_digest": sha256_digest(dict(getattr(selector, "match_labels", None) or {})),
+            }
+        except Exception:  # safe category only; never export exception text
+            deployment_status = {"read_status": "error"}
+        return {
+            "probe_healthy": bool(probe_healthy),
+            "target_service": service_summary(target_service),
+            "frontend_service": service_summary(frontend_service),
+            "target_endpoints": endpoint_summary(target_service),
+            "target_deployment": deployment_status,
+            "policy_present": self._policy_exists(),
+        }
+
+    def _baseline_connectivity(self) -> tuple[bool, int, Mapping[str, Any]]:
         samples = [self._connectivity_healthy()]
         remaining = self.baseline_window_seconds
         while remaining > 0:
@@ -117,7 +178,15 @@ class SREGymLivePhaseProbe:
             self.sleep(interval)
             remaining -= interval
             samples.append(self._connectivity_healthy())
-        return all(samples), len(samples)
+        healthy = all(samples)
+        diagnostic = self._baseline_connectivity_diagnostic(healthy)
+        diagnostic = {
+            **diagnostic,
+            "sample_count": len(samples),
+            "healthy_sample_count": sum(1 for sample in samples if sample),
+            "samples_digest": sha256_digest({"samples": samples}),
+        }
+        return healthy, len(samples), diagnostic
 
     def __call__(self, phase: str) -> Mapping[str, Any]:
         if self._started_at is None:
@@ -130,7 +199,7 @@ class SREGymLivePhaseProbe:
         if phase == "reset":
             application_ready = self._application_ready()
             policy_present = self._policy_exists()
-            connectivity_healthy, baseline_samples = self._baseline_connectivity()
+            connectivity_healthy, baseline_samples, baseline_diagnostic = self._baseline_connectivity()
             image_inventory = (
                 dict(self.runtime_image_inventory())
                 if self.runtime_image_inventory is not None
@@ -197,6 +266,7 @@ class SREGymLivePhaseProbe:
             "connectivity_healthy": connectivity_healthy,
             "baseline_window_seconds": self.baseline_window_seconds if phase == "reset" else 0,
             "baseline_samples": baseline_samples if phase == "reset" else 0,
+            "baseline_connectivity_diagnostic": baseline_diagnostic if phase == "reset" else None,
             "runtime_image_inventory": image_inventory if phase == "reset" else None,
             "abort_reasons": abort_reasons,
             "telemetry_window": telemetry,

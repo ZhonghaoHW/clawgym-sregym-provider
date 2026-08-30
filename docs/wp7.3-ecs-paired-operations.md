@@ -28,3 +28,21 @@ proves the baseline recommendation probe is healthy for the full configured
 window. Set `TMPDIR` to a user-owned directory for every worker invocation;
 do not remove or overwrite root-owned files. Only after E0 passes may the
 approved six-episode matrix be started.
+## Readiness failure diagnosis (2026-08-30)
+
+The failed paired run is retained as infrastructure evidence.  The worker
+created a shared `/tmp/sregym-agent-kubeconfig`; an earlier root-owned file
+made the unprivileged worker fail before model invocation.  A later isolated
+run removed that collision, but E0 reset still reported an unhealthy baseline
+frontend-to-recommendation probe.  Nodes, deployments and locked image
+inventory were healthy, so the Oracle error was not evidence of an agent
+semantic failure.  Future attempts must use a private, empty per-attempt
+`TMPDIR` and retain a redacted baseline connectivity diagnostic (service,
+endpoint and deployment identities/counts only).  The probe result remains
+Oracle-owned; diagnostics never turn a failed reset into a pass.
+
+The diagnostic is emitted in the reset postconditions as
+`baseline_connectivity_diagnostic`.  It contains no command output, paths,
+exception text, kubeconfig, IP address or secret.  A missing or unhealthy
+baseline is fail-closed and blocks the candidate matrix until the environment
+is repaired and a new control attempt is recorded.

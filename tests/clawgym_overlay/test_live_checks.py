@@ -63,7 +63,12 @@ def phase_probe():
 
 def test_live_phase_probe_distinguishes_healthy_fault_and_cleanup() -> None:
     probe, core, network = phase_probe()
-    assert probe("reset")["passed"] is True
+    reset = probe("reset")
+    assert reset["passed"] is True
+    diagnostic = reset["baseline_connectivity_diagnostic"]
+    assert diagnostic["probe_healthy"] is True
+    assert diagnostic["sample_count"] == 1
+    assert "exception" not in str(diagnostic).lower()
     network.present = True
     fault = probe("fault")
     assert fault["passed"] is True
