@@ -78,6 +78,13 @@ def execute(args: argparse.Namespace) -> None:
     run_document = _read_json(args.run_manifest)
     agent_document = _read_json(args.agent_release)
     environment_document = _read_json(args.environment_release)
+    approval_document = _read_json(args.approval) if getattr(args, "approval", None) else None
+    matrix_document = _read_json(args.matrix) if getattr(args, "matrix", None) else None
+    trial_document = _read_json(args.trial) if getattr(args, "trial", None) else None
+    request_document = _read_json(args.validation_request) if getattr(args, "validation_request", None) else None
+    candidate_document = _read_json(args.candidate) if getattr(args, "candidate", None) else None
+    receipt_document = _read_json(args.materialization_receipt) if getattr(args, "materialization_receipt", None) else None
+    parent_document = _read_json(args.parent_agent_release) if getattr(args, "parent_agent_release", None) else None
     verify_release_revisions(agent_document, environment_document, args.provider_revision)
 
     from sregym.conductor.conductor import Conductor, ConductorConfig
@@ -190,13 +197,35 @@ def execute(args: argparse.Namespace) -> None:
         media_type="application/json",
     )
     try:
-        result = execute_worker(
-            episode_id=args.episode_id,
-            run_document=run_document,
-            agent_release_document=agent_document,
-            environment_release_document=environment_document,
-            registry=registry,
-        )
+        if run_document.get("lane") == "agent_validation" and args.materialization_bundle:
+            from clawgym.execution_bridge import execute_approved_trial
+            required = (request_document, candidate_document, receipt_document, parent_document, approval_document, matrix_document, trial_document)
+            if any(document is None for document in required):
+                raise ValueError("materialized candidate execution requires the complete approved artifact chain")
+            result = execute_approved_trial(
+                episode_id=args.episode_id,
+                request_document=request_document,
+                candidate_document=candidate_document,
+                materialization_receipt=receipt_document,
+                parent_agent_release_document=parent_document,
+                run_document=run_document,
+                agent_release_document=agent_document,
+                environment_release_document=environment_document,
+                registry=registry,
+                expected_materializer_revision=args.provider_revision,
+                expected_seed=run.seed,
+                approval_document=approval_document,
+                matrix_document=matrix_document,
+                trial_document=trial_document,
+            )
+        else:
+            result = execute_worker(
+                episode_id=args.episode_id,
+                run_document=run_document,
+                agent_release_document=agent_document,
+                environment_release_document=environment_document,
+                registry=registry,
+            )
         print(json.dumps({"bundle_digest": result.bundle_digest, "episode_digest": result.episode_digest}))
     finally:
         request_shutdown()
@@ -219,6 +248,13 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--deployment-cache", required=True)
     command.add_argument("--agent-secret-file")
     command.add_argument("--materialization-bundle")
+    command.add_argument("--validation-request")
+    command.add_argument("--candidate")
+    command.add_argument("--materialization-receipt")
+    command.add_argument("--parent-agent-release")
+    command.add_argument("--approval")
+    command.add_argument("--matrix")
+    command.add_argument("--trial")
     command.set_defaults(handler=execute)
     return result
 
