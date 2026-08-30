@@ -46,3 +46,23 @@ The diagnostic is emitted in the reset postconditions as
 exception text, kubeconfig, IP address or secret.  A missing or unhealthy
 baseline is fail-closed and blocks the candidate matrix until the environment
 is repaired and a new control attempt is recorded.
+
+## Readiness repair attempt (2026-08-30, isolated checkout)
+
+The new detached checkouts passed the no-model readiness probe
+(`5b2070e86b416b677e1fd8a6e725f8bccc754709404c22679a671f67105588ee`). The
+first E0 invocation was rejected before lifecycle execution because the caller
+supplied a non-platform-locked EnvironmentRelease. The corrected invocation
+used the exact E0 release and pinned Provider runtime, reached reset/deploy,
+then blocked in the upstream Helm `dependency update` for Prometheus because
+the ECS host could not reach `prometheus-community.github.io`. No bundle,
+episode or Oracle verdict was produced. The process was terminated, the
+OpenEBS namespace created by this attempt was removed, and the final check
+showed four Ready nodes, baseline namespaces only and no agent process.
+
+The blocked evidence is archived outside Git at
+`_artifacts/wp7-reference-evolution/wp73/ecs-paired-action-efficiency-v3/remote-e0-blocked`.
+This is an infrastructure block, not a candidate result. A future retry
+requires verified offline Helm dependencies or restored network access without
+changing the pinned Provider runtime; the WP7.3 matrix must remain stopped
+until E0 completes.
