@@ -35,3 +35,24 @@ explicit attempt request/ledger and writes a host-owned exclusive attempt
 claim before lifecycle execution. These changes do not alter R0, R1n, E0,
 Oracle or the frozen v9b evidence. The new candidate is not executed until a
 human approval artifact binds its exact matrix and trial digests.
+
+## Approved sentinel closure (2026-08-30)
+
+The approved R1n-compatible candidate was run only after the fixed E0 control
+passed. The first control attempt failed closed with
+`filesystem_dependency_missing` because a fresh detached checkout had not
+initialized the repository's pinned `SREGym-applications` submodule. The
+submodule was initialized without changing the Provider commit, and the one
+permitted control retry completed reset, fault, deterministic control repair,
+Oracle, recovery and cleanup.
+
+The R1n-compatible `case-001 / seed-2026082701` sentinel then completed via
+the approved execution bridge. The retained bundle digest is
+`9069cd3d531408d55c25ef762e83859d08448b114a78a1928ebabfb775790673`; the
+episode digest is
+`ab1e35d76a458bbf5932235af6c2796f1554afc3bc7154eada954fa7f74dbd00`. Runtime
+evidence records a complete handoff, one exact NetworkPolicy mutation, target
+absence reread, recommendation endpoint readiness, authoritative Oracle
+`pass`, recovery and cleanup. The model invocation exited normally. This is a
+successful single sentinel, not a three-case matrix or cross-agent result;
+R0/R1n/E0 and all historical evidence remain unchanged.
