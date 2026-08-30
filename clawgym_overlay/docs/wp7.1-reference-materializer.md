@@ -22,13 +22,14 @@ no execution authority.
 
 ## Offline compatibility evidence (2026-08-30)
 
-The released R1n prompt files were compiled from explicit paths using Provider
-revision `15782c6883a95698955f7e22b83a0f123a7e3d84`. The generated receipt is
-`f84bf474274bf726d8d9351ecd17e0b70be2fb9c23ee868939d702bbb3a51754`; it
+The released R1n prompt files were compiled from explicit paths using the
+committed Provider revision `2355ab58151f1604a4a766dd8033832d07125052`. The
+runtime-pinned receipt is
+`682136cbc589a202741f17026fc08a188cc69e40e10837a6994b087dc407398f`; it
 describes exactly four files under `reference-materialized/` and their
 read-only container destinations. Two fresh output directories compared
 byte-for-byte. This evidence is stored outside Git at
-`_artifacts/wp7-reference-evolution/wp71/reference-r1n-compat/generated-v2/`.
+`_artifacts/wp7-reference-evolution/wp71/reference-r1n-compat/generated-v3/`.
 
 The ClawGym consumer additionally rejects absolute/traversal paths, duplicate
 entries and any file set other than the four compiler outputs. This is a
