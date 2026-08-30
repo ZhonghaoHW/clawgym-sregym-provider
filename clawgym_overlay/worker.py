@@ -25,7 +25,7 @@ from clawgym_overlay.live_checks import (
 from clawgym_overlay.deployment_lock import deployment_lock_digest, load_deployment_lock
 from clawgym_overlay.locked_runtime import LockedRuntime
 from clawgym_overlay.providers import SREGymEnvironmentValidationAdapter, SREGymReferenceAgentAdapter
-from clawgym_overlay.reference_profiles import load_reference_agent_profile
+from clawgym_overlay.reference_profiles import load_reference_agent_profile, load_materialized_reference_profile
 from clawgym_overlay.reference_runner import SafeStratusRunner
 from clawgym_overlay.release import load_release_manifests
 from clawgym_overlay.validation_profiles import load_validation_profiles
@@ -136,10 +136,10 @@ def execute(args: argparse.Namespace) -> None:
         attribution_capture=lambda phase: capture_oracle_attribution(conductor, phase),
     )
     if run_document.get("lane") == "agent_validation":
-        profile = load_reference_agent_profile(
-            manifest_root,
-            profile_digest=agent_document.get("invocation_profile_digest"),
-        )
+        if getattr(args, "materialization_bundle", None):
+            profile = load_materialized_reference_profile(args.materialization_bundle, profile_digest=agent_document.get("invocation_profile_digest"))
+        else:
+            profile = load_reference_agent_profile(manifest_root, profile_digest=agent_document.get("invocation_profile_digest"))
         if agent_document.get("adapter_id") != profile["adapter_id"]:
             raise ValueError("AgentRelease does not identify the frozen reference adapter")
         if agent_document.get("invocation_profile_digest") != sha256_digest(profile):
@@ -218,6 +218,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--provider-revision", required=True)
     command.add_argument("--deployment-cache", required=True)
     command.add_argument("--agent-secret-file")
+    command.add_argument("--materialization-bundle")
     command.set_defaults(handler=execute)
     return result
 

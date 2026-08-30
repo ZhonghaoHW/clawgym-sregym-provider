@@ -177,3 +177,30 @@ def load_reference_agent_profile(
         if variant not in {"r0-baseline", "r1-evidence-first"}:
             raise ContractValidationError("reference agent profile variant is invalid")
     return document
+
+
+def load_materialized_reference_profile(bundle_root: str | Path, *, profile_digest: str | None = None) -> dict[str, Any]:
+    """Load one explicit WP7.1 materialization bundle; never scan a directory."""
+    root = Path(bundle_root).resolve(strict=True)
+    path = root / "profile.json"
+    if not path.is_file() or path.is_symlink():
+        raise ContractValidationError("materialized profile must be an explicit regular file")
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ContractValidationError("materialized profile is invalid JSON") from exc
+    if not isinstance(document, dict) or document.get("schema_id") != "clawgym.sregym_reference_agent_profile.v2":
+        raise ContractValidationError("materialized profile schema is invalid")
+    declared = document.get("profile_digest")
+    payload = dict(document); payload.pop("profile_digest", None)
+    if not isinstance(declared, str) or sha256_digest(payload) != declared or (profile_digest is not None and declared != profile_digest):
+        raise ContractValidationError("materialized profile digest mismatch")
+    if document.get("adapter_id") != "sregym.reference-agent.v1" or document.get("runtime_injection") != "host-only-file":
+        raise ContractValidationError("materialized profile boundary is invalid")
+    if document.get("command") != ["python", "-m", "reference_driver_r1f"]:
+        raise ContractValidationError("materialized profile command is not the pinned Reference driver")
+    bounded = document.get("bounded_execution")
+    if not isinstance(bounded, dict) or bounded.get("container_timeout_seconds") != 900:
+        raise ContractValidationError("materialized profile timeout is not frozen")
+    reject_forbidden_content(document)
+    return document

@@ -8,6 +8,7 @@ from clawgym_overlay.release import (
     provider_configuration_digests,
 )
 from clawgym_overlay.provenance import ProviderProvenanceError, source_revision
+from clawgym_overlay.materializer import MaterializationError, materialize_reference_profile
 
 __all__ = [
     "MANIFEST_FILENAMES",
@@ -17,4 +18,6 @@ __all__ = [
     "provider_configuration_digests",
     "ProviderProvenanceError",
     "source_revision",
+    "MaterializationError",
+    "materialize_reference_profile",
 ]
