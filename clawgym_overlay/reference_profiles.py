@@ -199,6 +199,10 @@ def load_materialized_reference_profile(bundle_root: str | Path, *, profile_dige
         raise ContractValidationError("materialized profile boundary is invalid")
     if document.get("command") != ["python", "-m", "reference_driver_r1f"]:
         raise ContractValidationError("materialized profile command is not the pinned Reference driver")
+    if document.get("runtime_protocol") != "r1i-typed-handoff-journal-v1":
+        raise ContractValidationError("materialized profile runtime protocol is not the pinned typed protocol")
+    if document.get("handoff_argument_protocol") != "structured-submit-tool-argument-v1":
+        raise ContractValidationError("materialized profile handoff argument protocol is invalid")
     bounded = document.get("bounded_execution")
     if not isinstance(bounded, dict) or bounded.get("container_timeout_seconds") != 900:
         raise ContractValidationError("materialized profile timeout is not frozen")

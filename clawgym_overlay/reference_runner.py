@@ -590,7 +590,8 @@ class SafeStratusRunner:
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
             raise RuntimeError("reference agent image does not have a local SHA-256 identity")
         command_profile = self._profile["command"]
-        is_r1i = self._profile.get("sop_variant") == "r1i-typed-handoff-journal-v1"
+        runtime_protocol = self._profile.get("runtime_protocol") or self._profile.get("sop_variant")
+        is_r1i = runtime_protocol == "r1i-typed-handoff-journal-v1"
         timeout_seconds = self._profile.get("bounded_execution", {}).get(
             "container_timeout_seconds", 1800
         )
@@ -615,6 +616,8 @@ class SafeStratusRunner:
                 "--env-file", str(env_file),
                 "-e", f"SREGYM_ARTIFACT_ID={self._profile['artifact_id']}",
                 "-e", f"SREGYM_SOP_VARIANT={self._profile.get('sop_variant', 'r0-baseline')}",
+                "-e", f"SREGYM_RUNTIME_PROTOCOL={runtime_protocol or 'legacy'}",
+                "-e", f"SREGYM_HANDOFF_ARGUMENT_PROTOCOL={self._profile.get('handoff_argument_protocol', 'marker-required')}",
                 "-e", f"SREGYM_RUN_MANIFEST_DIGEST={run_manifest.manifest_digest}",
                 "-e", f"SREGYM_AGENT_RELEASE_DIGEST={getattr(getattr(run_manifest, 'agent_release', None), 'agent_release_digest', '')}",
                 "-e", "API_HOSTNAME=host.docker.internal",
@@ -687,8 +690,9 @@ class SafeStratusRunner:
         duration_ms = int((time.monotonic() - started) * 1000)
         is_r1d = self._profile.get("sop_variant") == "r1d-typed-remediation-v1"
         is_r1e = self._profile.get("sop_variant") == "r1e-runtime-gated-v1"
-        is_r1f = self._profile.get("sop_variant") == "r1f-host-normalized-remediation-v1"
-        is_r1i = self._profile.get("sop_variant") == "r1i-typed-handoff-journal-v1"
+        runtime_protocol = self._profile.get("runtime_protocol") or self._profile.get("sop_variant")
+        is_r1f = runtime_protocol == "r1f-host-normalized-remediation-v1"
+        is_r1i = runtime_protocol == "r1i-typed-handoff-journal-v1"
         handoff = _extract_r1f_handoff(trajectories, run_manifest) if (is_r1f or is_r1i) else (_extract_r1e_handoff(trajectories, run_manifest) if is_r1e else (_extract_r1d_handoff(trajectories, run_manifest) if is_r1d else (_extract_r1c_handoff(trajectories, run_manifest) if self._profile.get("sop_variant") in {"r1c-structured-attribution-v1", "r1c-structured-attribution-deepseek-v1"} else None)))
         ledger = _extract_action_ledger(trajectories, run_manifest, schema_id="clawgym.sregym_agent_action_ledger.v2" if (is_r1d or is_r1e or is_r1f or is_r1i) else "clawgym.sregym_agent_action_ledger.v1") if is_r1d or is_r1e or is_r1f or is_r1i or self._profile.get("sop_variant") in {"r1c-structured-attribution-v1", "r1c-structured-attribution-deepseek-v1"} else None
         gate_journal = _extract_gate_event_journal(trajectories, run_manifest) if is_r1i else None

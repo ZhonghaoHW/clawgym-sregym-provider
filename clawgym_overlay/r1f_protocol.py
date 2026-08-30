@@ -152,6 +152,41 @@ def normalise_handoff_submission(
     return document
 
 
+def normalise_handoff_tool_argument(
+    answer: str,
+    *,
+    run_manifest_digest: str,
+    agent_release_digest: str,
+) -> dict[str, object] | None:
+    """Normalize a typed ``submit_tool.ans`` argument.
+
+    A tool argument is already delimited by the provider protocol, so the
+    transcript marker is optional here.  The free-text submission parser above
+    remains marker-required.  Keeping the two paths separate prevents a
+    transcript tail from being mistaken for a host-authorized handoff while
+    accepting the JSON object emitted by OpenAI-compatible tool calls.
+    """
+
+    if not isinstance(answer, str):
+        return None
+    value = answer.strip()
+    if value.startswith(MARKER):
+        value = value[len(MARKER) :].lstrip(" \t\r\n:")
+    try:
+        parsed, end = json.JSONDecoder().raw_decode(value)
+    except json.JSONDecodeError:
+        return None
+    if value[end:].strip() or not isinstance(parsed, Mapping):
+        return None
+    if set(parsed) != set(_REQUIRED_SEMANTIC_FIELDS):
+        return None
+    return normalise_handoff_submission(
+        MARKER + " " + json.dumps(parsed, ensure_ascii=False, separators=(",", ":")),
+        run_manifest_digest=run_manifest_digest,
+        agent_release_digest=agent_release_digest,
+    )
+
+
 def incomplete_handoff(*, run_manifest_digest: str, agent_release_digest: str) -> dict[str, object]:
     document: dict[str, object] = {
         "schema_id": "clawgym.sregym_diagnosis_handoff.v2",
@@ -222,6 +257,10 @@ def handoff_from_trajectory_records(
 ) -> dict[str, object]:
     for answer in _tool_submission_values(records):
         document = normalise_handoff_submission(
+            answer,
+            run_manifest_digest=run_manifest_digest,
+            agent_release_digest=agent_release_digest,
+        ) or normalise_handoff_tool_argument(
             answer,
             run_manifest_digest=run_manifest_digest,
             agent_release_digest=agent_release_digest,

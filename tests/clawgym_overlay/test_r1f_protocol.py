@@ -12,6 +12,7 @@ from clawgym_overlay.r1f_protocol import (
     endpoint_result_ready,
     handoff_from_trajectory_records,
     normalise_handoff_submission,
+    normalise_handoff_tool_argument,
 )
 
 
@@ -58,6 +59,27 @@ def test_real_r1f_submission_with_narrative_evidence_normalises() -> None:
     assert handoff["verification_plan"] == [
         "reread the policy and read recommendation endpoints"
     ]
+
+
+def test_structured_tool_argument_accepts_bare_json_without_marker() -> None:
+    answer = _attempt10_style_submission().removeprefix("R1F_HANDOFF_JSON\n")
+    handoff = normalise_handoff_tool_argument(
+        answer, run_manifest_digest=RUN, agent_release_digest=RELEASE
+    )
+    assert handoff is not None
+    assert handoff["candidate_resource"] == TARGET
+
+
+def test_structured_tool_argument_rejects_trailing_text_and_extra_fields() -> None:
+    answer = _attempt10_style_submission().removeprefix("R1F_HANDOFF_JSON\n")
+    assert normalise_handoff_tool_argument(
+        answer + " trailing", run_manifest_digest=RUN, agent_release_digest=RELEASE
+    ) is None
+    value = json.loads(answer)
+    value["extra"] = "not allowed"
+    assert normalise_handoff_tool_argument(
+        json.dumps(value), run_manifest_digest=RUN, agent_release_digest=RELEASE
+    ) is None
 
 
 def test_handoff_rejects_non_target_or_missing_semantic_evidence() -> None:
@@ -253,3 +275,27 @@ def test_r1i_plain_json_submit_argument_is_accepted(monkeypatch) -> None:
     assert isinstance(result, Command)
     assert driver._handoff is not None
     assert driver._handoff["status"] == "complete"
+
+
+def test_materialized_runtime_protocol_accepts_plain_tool_argument(monkeypatch) -> None:
+    import clawgym_overlay.reference_driver_r1f as driver
+
+    monkeypatch.setenv("SREGYM_RUNTIME_PROTOCOL", "r1i-typed-handoff-journal-v1")
+    monkeypatch.setenv("SREGYM_HANDOFF_ARGUMENT_PROTOCOL", "structured-submit-tool-argument-v1")
+    monkeypatch.setenv("SREGYM_SOP_VARIANT", "materialized-reference-v1")
+    monkeypatch.setenv("SREGYM_RUN_MANIFEST_DIGEST", RUN)
+    monkeypatch.setenv("SREGYM_AGENT_RELEASE_DIGEST", RELEASE)
+    monkeypatch.setattr(driver, "_handoff", None)
+    monkeypatch.setattr(driver, "_handoff_rejections", 0)
+    monkeypatch.setattr(driver, "_gate", R1fGate())
+
+    result = asyncio.run(
+        driver._gated_diagnosis_submit(
+            _attempt10_style_submission().removeprefix("R1F_HANDOFF_JSON\n"),
+            {"num_steps": 4},
+            "call-materialized",
+        )
+    )
+    assert isinstance(result, Command)
+    assert driver._handoff is not None
+    assert driver._gate.handoff_validated

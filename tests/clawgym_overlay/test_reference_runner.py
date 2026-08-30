@@ -227,6 +227,8 @@ def test_materialized_runner_mounts_explicit_bundle_and_reference_driver(
         "artifact_id": "network_policy_block",
         "command": ["python", "-m", "reference_driver_r1f"],
         "sop_variant": "materialized-reference-v1",
+        "runtime_protocol": "r1i-typed-handoff-journal-v1",
+        "handoff_argument_protocol": "structured-submit-tool-argument-v1",
         "config_bundle_digest": config["config_bundle_digest"],
         "bounded_execution": {"container_timeout_seconds": 900},
     }
@@ -235,6 +237,8 @@ def test_materialized_runner_mounts_explicit_bundle_and_reference_driver(
     )(SimpleNamespace(manifest_digest="d" * 64), str(kubeconfig))
     docker = calls[1]
     assert "PYTHONPATH=/opt:/opt/clawgym_overlay:/opt/sregym" in docker
+    assert "SREGYM_RUNTIME_PROTOCOL=r1i-typed-handoff-journal-v1" in docker
+    assert "SREGYM_HANDOFF_ARGUMENT_PROTOCOL=structured-submit-tool-argument-v1" in docker
     assert any("reference_driver_r1f.py:ro" in item for item in docker)
     assert any("r1f_protocol.py:ro" in item for item in docker)
     assert sum("diagnosis_agent_config.yaml:ro" in item for item in docker) == 1

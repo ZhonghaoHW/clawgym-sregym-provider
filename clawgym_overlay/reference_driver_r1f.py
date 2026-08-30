@@ -16,6 +16,7 @@ from clawgym_overlay.r1f_protocol import (
     R1fGate,
     incomplete_handoff,
     normalise_handoff_submission,
+    normalise_handoff_tool_argument,
     parse_command,
 )
 from langchain_core.messages import HumanMessage, ToolMessage, AIMessage
@@ -157,7 +158,11 @@ def _r1i_call_model(self, state):
 async def _gated_diagnosis_submit(ans: str, state, tool_call_id: str) -> Command:
     global _handoff, _handoff_rejections
     run_digest, release_digest = _identities()
-    if os.getenv("SREGYM_SOP_VARIANT") == "r1i-typed-handoff-journal-v1":
+    if os.getenv("SREGYM_HANDOFF_ARGUMENT_PROTOCOL") == "structured-submit-tool-argument-v1":
+        document = normalise_handoff_tool_argument(
+            ans, run_manifest_digest=run_digest, agent_release_digest=release_digest
+        )
+    elif os.getenv("SREGYM_SOP_VARIANT") == "r1i-typed-handoff-journal-v1":
         document = _r1i_normalise_submission(
             ans, run_digest=run_digest, release_digest=release_digest
         )
@@ -272,7 +277,8 @@ async def _wait(**kwargs):
 def main() -> None:
     global _gate, _handoff, _stage, _handoff_rejections
     global _original_diagnosis_submit, _original_mitigation_submit, _original_diagnosis_call_model
-    is_r1i = os.getenv("SREGYM_SOP_VARIANT") == "r1i-typed-handoff-journal-v1"
+    runtime_protocol = os.getenv("SREGYM_RUNTIME_PROTOCOL") or os.getenv("SREGYM_SOP_VARIANT")
+    is_r1i = runtime_protocol == "r1i-typed-handoff-journal-v1"
     _gate = R1fGate(strict_postconditions=is_r1i)
     _handoff = None
     _stage = "diagnosis"

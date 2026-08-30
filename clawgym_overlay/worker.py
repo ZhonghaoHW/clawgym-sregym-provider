@@ -13,6 +13,7 @@ from clawgym.artifacts import RetainedArtifactSink
 from clawgym.contracts import RunManifest, canonical_json_bytes, sha256_digest
 from clawgym.providers import ProviderBinding, ProviderDefinition, ProviderRegistry
 from clawgym.worker import execute_worker, verify_source_checkout
+from clawgym.attempt_authority import claim_attempt
 from clawgym_overlay.composition import register_sregym_providers
 from clawgym_overlay.live_checks import (
     SREGymCausalTelemetryRecorder,
@@ -81,6 +82,8 @@ def execute(args: argparse.Namespace) -> None:
     approval_document = _read_json(args.approval) if getattr(args, "approval", None) else None
     matrix_document = _read_json(args.matrix) if getattr(args, "matrix", None) else None
     trial_document = _read_json(args.trial) if getattr(args, "trial", None) else None
+    attempt_request_document = _read_json(args.attempt_request) if getattr(args, "attempt_request", None) else None
+    attempt_ledger_document = _read_json(args.attempt_ledger) if getattr(args, "attempt_ledger", None) else None
     request_document = _read_json(args.validation_request) if getattr(args, "validation_request", None) else None
     candidate_document = _read_json(args.candidate) if getattr(args, "candidate", None) else None
     receipt_document = _read_json(args.materialization_receipt) if getattr(args, "materialization_receipt", None) else None
@@ -206,6 +209,17 @@ def execute(args: argparse.Namespace) -> None:
             required = (request_document, candidate_document, receipt_document, parent_document, approval_document, matrix_document, trial_document)
             if any(document is None for document in required):
                 raise ValueError("materialized candidate execution requires the complete approved artifact chain")
+            if attempt_request_document is None or attempt_ledger_document is None or not args.attempt_claim_root:
+                raise ValueError("materialized candidate execution requires attempt request, ledger and claim root")
+            claim = claim_attempt(
+                root=args.attempt_claim_root,
+                approval_record_digest=approval_document["approval_record_digest"],
+                trial_digest=trial_document["trial_digest"],
+                attempt_number=attempt_request_document["attempt_number"],
+                attempt_id=attempt_request_document["execution_attempt_id"],
+                runtime_reference=args.provider_revision,
+            )
+            sink.write_bytes("host/execution-attempt-claim.json", canonical_json_bytes(claim), media_type="application/json")
             result = execute_approved_trial(
                 episode_id=args.episode_id,
                 request_document=request_document,
@@ -221,6 +235,9 @@ def execute(args: argparse.Namespace) -> None:
                 approval_document=approval_document,
                 matrix_document=matrix_document,
                 trial_document=trial_document,
+                attempt_request_document=attempt_request_document,
+                attempt_ledger_document=attempt_ledger_document,
+                attempt_claim_document=claim,
             )
         else:
             result = execute_worker(
@@ -259,6 +276,9 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--approval")
     command.add_argument("--matrix")
     command.add_argument("--trial")
+    command.add_argument("--attempt-request")
+    command.add_argument("--attempt-ledger")
+    command.add_argument("--attempt-claim-root")
     command.set_defaults(handler=execute)
     return result
 
