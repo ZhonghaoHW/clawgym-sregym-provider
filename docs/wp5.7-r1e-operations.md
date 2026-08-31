@@ -141,3 +141,17 @@ This separation makes a green offline gate meaningful without weakening the
 live environment contract. Slow model-judge tests are excluded even when their
 environment variable is present. It is test hygiene only; it does not change
 R1n, the `164f…` runtime, E0, the Oracle or retained evidence.
+
+## WP7.4 ECS campaign attempt (2026-08-31)
+
+Using Provider revision `2e16b29b4972ebb4d59dddd8920f7ae9f83e0c33`, E0
+readiness/control and all three Gen1 train trials completed. Rung 1
+case-001 passed for Gen1 and Gen2-A (27 and 17 ledger actions). Gen2-B
+attempt 1 failed closed before fault injection with the redacted
+`baseline_connectivity_unhealthy` diagnostic. The single authorized retry
+failed closed during recovery with `provider_unclassified`; cleanup still
+returned the cluster to baseline, but no valid episode bundle was produced.
+The attempts are archived outside Git under the WP7.4 operator artifact
+directory. The campaign retry budget is exhausted and is therefore
+`WP74_INFRASTRUCTURE_BLOCKED`; no rung-2 or governance action was run. This
+does not alter R0/R1n, E0, Oracle or Provider runtime behavior.
