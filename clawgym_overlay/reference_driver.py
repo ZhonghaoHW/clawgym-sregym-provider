@@ -31,6 +31,7 @@ def _panel_safe_load(payload):
     value = _upstream_safe_load(payload)
     if isinstance(value, dict) and {"max_retry_attempts", "retry_mode"}.issubset(value):
         value = dict(value)
+        value["max_step"] = min(int(value.get("max_step", 8)), 8)
         value["max_retry_attempts"] = 1
         value["retry_mode"] = "none"
     return value

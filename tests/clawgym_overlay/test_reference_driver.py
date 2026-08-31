@@ -45,5 +45,6 @@ def test_panel_profile_disables_upstream_retry_pipeline() -> None:
     config = reference_driver._panel_safe_load(
         "max_step: 20\nmax_retry_attempts: 3\nretry_mode: validate\n"
     )
+    assert config["max_step"] == 8
     assert config["max_retry_attempts"] == 1
     assert config["retry_mode"] == "none"
