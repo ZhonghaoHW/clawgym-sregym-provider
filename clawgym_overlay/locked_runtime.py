@@ -205,6 +205,8 @@ class LockedRuntime:
         required_prometheus_args = (
             "--set",
             "kube-state-metrics.image.repository=kube-state-metrics/kube-state-metrics",
+            "--set",
+            "kube-state-metrics.image.tag=v2.9.2",
             "--atomic",
             "--wait",
             "--wait-for-jobs",
@@ -213,10 +215,11 @@ class LockedRuntime:
         )
         required_fragments = (
             required_prometheus_args[:2],
-            (required_prometheus_args[2],),
-            (required_prometheus_args[3],),
+            required_prometheus_args[2:4],
             (required_prometheus_args[4],),
-            required_prometheus_args[5:],
+            (required_prometheus_args[5],),
+            (required_prometheus_args[6],),
+            required_prometheus_args[7:],
         )
         for fragment in required_fragments:
             width = len(fragment)

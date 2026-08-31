@@ -48,6 +48,8 @@ def test_locked_runtime_configures_only_verified_assets_and_digest_images(tmp_pa
     assert prometheus.helm_configs["extra_args"] == [
         "--set",
         "kube-state-metrics.image.repository=kube-state-metrics/kube-state-metrics",
+        "--set",
+        "kube-state-metrics.image.tag=v2.9.2",
         "--atomic",
         "--wait",
         "--wait-for-jobs",
@@ -80,10 +82,11 @@ def test_configure_services_adds_atomic_helm_fragments_idempotently(tmp_path) ->
     locked.configure_services(conductor)
 
     arguments = conductor.prometheus.helm_configs["extra_args"]
-    assert arguments.count("--set") == 2
+    assert arguments.count("--set") == 3
     assert arguments.count(
         "kube-state-metrics.image.repository=kube-state-metrics/kube-state-metrics"
     ) == 1
+    assert arguments.count("kube-state-metrics.image.tag=v2.9.2") == 1
     assert arguments.count("--atomic") == 1
     assert arguments.count("--wait") == 1
     assert arguments.count("--wait-for-jobs") == 1
