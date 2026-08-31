@@ -93,6 +93,27 @@ The following checks are mandatory for every future environment bootstrap:
 The retained `host/source-checkouts.json` receipt is authoritative for the
 runtime SHA. A later documentation-only commit does not change the runtime
 identity of already released evidence.
+
+## Fresh E0.1 campaign execution (2026-08-31)
+
+The final campaign ran with the exact Provider runtime
+`b3111a7839a53bc10d792731e4f17a1af042c0fa` and ClawGym
+`4e92ba61f99133f151348385dec2f4c0a616897a`. Three Gen1 train trials and the
+case-001 rung-1 trials completed with valid, offline-verifiable evidence.
+Gen2-B was selected over Gen2-A by deterministic action count (16 versus 21;
+Gen1 control 23). Rung 2 then completed Gen1 cases 002/003 and Gen2-B cases
+002/003: all admitted attempts passed the one-target-mutation, verification,
+Oracle, recovery and cleanup gates. Gen1's admitted total was 73 actions and
+Gen2-B's was 52 (28.77% lower).
+
+Two infrastructure retries were exercised and remain immutable: Gen1 case-003
+had a reset-stage OpenEBS race, and Gen2-B case-002 had a pre-model host API
+connectivity failure. Each was followed by a distinct, successful attempt;
+the failed attempt is excluded from the formal comparison, never overwritten.
+The case-003 Gen2-B bundle was archived only after cleanup and has bundle
+digest `e23a3182add008c5aada9f54811a0fc93e9c8914ae67665f1c02fa4595c9208`.
+No runtime, model, tool permission, target, E0 or Oracle behavior was changed
+during the campaign.
 ## Campaign v2 admission (post-E0.1)
 
 Before a WP7.4 campaign trial can reset the environment or call a model, the
