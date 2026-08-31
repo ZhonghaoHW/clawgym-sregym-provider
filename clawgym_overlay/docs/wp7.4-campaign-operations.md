@@ -114,6 +114,17 @@ The case-003 Gen2-B bundle was archived only after cleanup and has bundle
 digest `e23a3182add008c5aada9f54811a0fc93e9c8914ae67665f1c02fa4595c9208`.
 No runtime, model, tool permission, target, E0 or Oracle behavior was changed
 during the campaign.
+
+## Governance closure
+
+The Evolution Lab ReviewPacket v7 recommendation was explicitly approved by
+the human reviewer. Promotion, baseline transition, rollback and reactivation
+were recorded as artifact-only control-plane operations; the Provider did not
+mutate R0, R1n, E0 or historical evidence. The final campaign is therefore
+closed as `WP74_CAMPAIGN_COMPLETE` / `advanced` for the Reference-family lane.
+The campaign remains `same_family_provisional`; this result is not
+cross-agent conformance and does not activate ZeroClaw or environment
+evolution.
 ## Campaign v2 admission (post-E0.1)
 
 Before a WP7.4 campaign trial can reset the environment or call a model, the
