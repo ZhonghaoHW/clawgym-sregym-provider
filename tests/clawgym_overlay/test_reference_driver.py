@@ -39,3 +39,11 @@ def test_r1b_force_submit_does_not_make_an_extra_llm_request(monkeypatch) -> Non
     result = asyncio.run(reference_driver._bounded_force_submit(agent, SimpleNamespace()))
     assert submitted == ["R1b bounded diagnosis handoff"]
     assert result["submitted"] is True
+
+
+def test_panel_profile_disables_upstream_retry_pipeline() -> None:
+    config = reference_driver._panel_safe_load(
+        "max_step: 20\nmax_retry_attempts: 3\nretry_mode: validate\n"
+    )
+    assert config["max_retry_attempts"] == 1
+    assert config["retry_mode"] == "none"

@@ -16,6 +16,24 @@ from langchain_core.messages import HumanMessage
 
 
 _upstream_wait_for_stage_switch = driver.wait_for_stage_switch
+_upstream_safe_load = driver.yaml.safe_load
+
+
+def _panel_safe_load(payload):
+    """Keep the legacy control to one bounded mitigation attempt.
+
+    The upstream ``validate`` retry pipeline starts a fresh LLM after the
+    conductor has already moved to ``awaiting_cleanup``.  That is outside the
+    panel control's lifecycle and can leave a Docker child running until the
+    host timeout.  The control bridge is intentionally single-attempt; it
+    does not alter the frozen upstream files or any R0 release.
+    """
+    value = _upstream_safe_load(payload)
+    if isinstance(value, dict) and {"max_retry_attempts", "retry_mode"}.issubset(value):
+        value = dict(value)
+        value["max_retry_attempts"] = 1
+        value["retry_mode"] = "none"
+    return value
 
 
 async def _bounded_force_submit(self, state):
@@ -65,6 +83,7 @@ def main() -> None:
     DiagnosisAgent.force_submit = _bounded_force_submit
     driver.wait_for_stage_switch = _wait_for_host_controlled_terminal
     driver.generate_run_summary = _bounded_generate_run_summary
+    driver.yaml.safe_load = _panel_safe_load
     asyncio.run(driver.main())
 
 
