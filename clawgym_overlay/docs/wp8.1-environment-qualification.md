@@ -39,7 +39,24 @@ controls completed successfully. Their bundle, provenance-v2 and signed
 attestation files are archived outside Git under
 `_artifacts/wp8-reference-environment/wp81/ingress-only-qualification-v1/`.
 The first attempt remains retained as an infrastructure dependency failure
-(missing `kubernetes` module). The five qualification trials have not been
-run: the current worker still exports the legacy environment-validation lane,
-so a live qualification evidence exporter is required before candidate
-qualification can be claimed.
+(missing `kubernetes` module). At that time the five qualification trials had
+not been run because the worker exported the legacy environment-validation
+lane; the live exporter and final matrix result are recorded below.
+
+## Qualification runner result (2026-09-01)
+
+The explicit `clawgym_overlay.qualification_runner` is the model-free live
+composition root for this lane. It accepts only an explicit trial and the
+allowlisted component bundle, uses hard-coded target operations, and emits
+typed state/tool/isolation artifacts. It never accepts candidate commands,
+paths, YAML or executable callbacks. Provider revision
+`b041cd3bc7d552d402d28892e469fbf54471274b` fixed the isolation attestation to
+carry control-namespace ownership, which ClawGym verifies before aggregation.
+
+With that revision, ECS ran two same-runtime controls and three
+`ingress_only` candidate repetitions serially. All five completed with the
+expected `pass → fail → pass → pass` Oracle sequence, healthy non-targets,
+usable declared tools, isolated ownership and successful cleanup. The first
+run set produced before the attestation fix remains retained but excluded;
+it is not silently rewritten. Remote runner output was downloaded outside Git
+and passed the ClawGym explicit-path verifier and Evolution Lab report v2.
