@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "clawgym.sregym_environment_component_bundle.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "receipt_digest", "component_digest", "component", "component_bundle_digest"],
+  "properties": {
+    "schema_id": {"const": "clawgym.sregym_environment_component_bundle.v1"},
+    "receipt_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "component_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "component": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_id", "family", "recipe_id", "variant", "base_component_digest", "candidate_component_digest", "target_namespace", "target_resource", "profile"],
+      "properties": {
+        "schema_id": {"const": "clawgym.sregym_environment_component.v1"},
+        "family": {"enum": ["fault", "workload", "observability"]},
+        "recipe_id": {"type": "string", "minLength": 1},
+        "variant": {"type": "string", "minLength": 1},
+        "base_component_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "candidate_component_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "target_namespace": {"const": "hotel-reservation"},
+        "target_resource": {"const": "deny-all-recommendation"},
+        "profile": {
+          "type": "object", "minProperties": 1, "additionalProperties": false,
+          "properties": {
+            "policy_scope": {"enum": ["ingress_egress", "ingress_only"]},
+            "rate": {"type": "integer", "minimum": 1},
+            "connections": {"type": "integer", "minimum": 1},
+            "duration_seconds": {"type": "integer", "minimum": 1},
+            "threads": {"type": "integer", "minimum": 1},
+            "sample_interval_seconds": {"type": "integer", "minimum": 1},
+            "capture_window_seconds": {"type": "integer", "minimum": 1}
+          }
+        }
+      }
+    },
+    "component_bundle_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

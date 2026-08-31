@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "profile_id", "revision", "families", "target", "required_states", "profile_digest"],
+  "properties": {
+    "schema_id": {"const": "clawgym.sregym_environment_control_profile.v1"},
+    "profile_id": {"type": "string", "minLength": 1},
+    "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "families": {"type": "object", "additionalProperties": false, "required": ["fault", "workload", "observability"], "properties": {"fault": {"const": ["ingress_egress", "ingress_only"]}, "workload": {"const": ["baseline", "high", "low"]}, "observability": {"const": ["high_frequency", "standard"]}}},
+    "target": {"const": {"kind": "NetworkPolicy", "namespace": "hotel-reservation", "name": "deny-all-recommendation"}},
+    "required_states": {"const": ["baseline", "injected", "recovered", "cleaned"]},
+    "profile_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
