@@ -20,8 +20,11 @@ Git. The panel result is `reference_environment_only`; it is a measurement of
 environment effect and agent outcomes, not a catalog promotion or
 cross-agent-conformance result.
 
-Local WP8.2 control-plane artifacts are retained outside Git. Panel digest is
-`16b37a5e7c96b02b351c03647fb03c857b4c2d33bef8ca890c6a877b184a77f1` and
+An initial local plan with Provider `b041cd3…` was rejected before execution
+because the active Gen2-B release pins runtime `b3111a7…`; it remains retained
+as superseded preparation. The corrected plan uses that pinned runtime and
+ClawGym `f1ca277…`. Its panel digest is
+`c1c642ee08c15dbcc33543155c19cdc00cf1dcc782f1fbe3881df7b98ae5be08` and
 measurement-plan digest is
-`28d136d43ed610d90262afc50aa1edccc8b42dff2ec01d62521a011d8912ec7a`.
+`b3f353e7bef210fb599be11072dc6f46d03b80bdfffb792ac893e4e3f81c717f`.
 The Provider has not executed an ECS panel trial yet.
