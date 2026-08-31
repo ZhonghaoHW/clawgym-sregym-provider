@@ -24,11 +24,11 @@ The panel plan records a provider runtime revision per agent role. R0 remains
 on its frozen historical revision while the active Reference release uses its
 own pinned runtime; the worker must not silently substitute one for the other.
 
-An initial local plan with Provider `b041cd3…` was rejected before execution
-because the active Gen2-B release pins runtime `b3111a7…`; it remains retained
-as superseded preparation. The corrected plan uses that pinned runtime and
-ClawGym `f1ca277…`. Its panel digest is
-`c1c642ee08c15dbcc33543155c19cdc00cf1dcc782f1fbe3881df7b98ae5be08` and
+Plans with a single provider revision or placeholder ClawGym SHA were rejected
+before execution and remain retained as superseded preparation. The corrected
+plan binds R0 Provider `cbe7b548…`, active Reference Provider `b3111a7…`, and
+ClawGym `0ac919ad…`. Its panel digest is
+`b497efbfed71bb3fe9d2500f6ddffc79d5fc2907f83620394f6bd8b20bdfbb38` and
 measurement-plan digest is
-`b3f353e7bef210fb599be11072dc6f46d03b80bdfffb792ac893e4e3f81c717f`.
+`001bf0c403e7a113db08ac37c604524f97e22d3a47fdb858eb0c424c150a3bb8`.
 The Provider has not executed an ECS panel trial yet.
