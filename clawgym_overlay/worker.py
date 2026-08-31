@@ -248,7 +248,8 @@ def execute(args: argparse.Namespace) -> None:
             profile = load_reference_agent_profile(manifest_root, profile_digest=agent_document.get("invocation_profile_digest"))
         if agent_document.get("adapter_id") != profile["adapter_id"]:
             raise ValueError("AgentRelease does not identify the frozen reference adapter")
-        if agent_document.get("invocation_profile_digest") != profile.get("profile_digest"):
+        expected_profile_digest = profile.get("profile_digest") or sha256_digest(profile)
+        if agent_document.get("invocation_profile_digest") != expected_profile_digest:
             raise ValueError("AgentRelease does not identify the frozen invocation profile")
         if not args.agent_secret_file:
             raise ValueError("WP5 reference worker requires --agent-secret-file")
