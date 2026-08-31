@@ -119,3 +119,14 @@ def test_reference_r1i_profile_is_explicit_and_journaled() -> None:
     )
     assert profile["sop_variant"] == "r1i-typed-handoff-journal-v1"
     assert profile["command"] == ["python", "-m", "reference_driver_r1f"]
+
+
+def test_reference_r0_panel_profile_preserves_model_and_adds_only_terminal_bridge() -> None:
+    path = MANIFESTS / "agent.reference-stratus-r0-panel.v1.json"
+    profile = load_reference_agent_profile(
+        MANIFESTS, profile_digest=sha256_digest(json.loads(path.read_text()))
+    )
+    assert profile["sop_variant"] == "r0-panel-host-terminal-v1"
+    assert profile["model_id"] == "openai/deepseek-v4-pro"
+    assert profile["command"] == ["python", "-m", "reference_driver"]
+    assert profile["config_bundle_digest"] == "0" * 64

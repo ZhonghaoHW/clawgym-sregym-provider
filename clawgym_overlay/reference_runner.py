@@ -658,12 +658,13 @@ class SafeStratusRunner:
                 command[image_index:image_index] = ["-v", f"{overlay.resolve()}:/opt/clawgym_overlay/reference_driver_r1e.py:ro", "-v", f"{protocol.resolve()}:/opt/clawgym_overlay/r1e_protocol.py:ro", "-e", "PYTHONPATH=/opt:/opt/clawgym_overlay:/opt/sregym"]
                 image_index = command.index(image_id)
                 command[image_index:image_index] = sum((['-v', mount] for mount in _r1e_config_mounts(self._profile)), [])
-            elif self._profile.get("sop_variant") in {"r1f-host-normalized-remediation-v1", "r1i-typed-handoff-journal-v1", "materialized-reference-v1"}:
-                overlay = Path(__file__).resolve().parent / "reference_driver_r1f.py"
+            elif self._profile.get("sop_variant") in {"r1f-host-normalized-remediation-v1", "r1i-typed-handoff-journal-v1", "materialized-reference-v1", "r0-panel-host-terminal-v1"}:
+                overlay_name = "reference_driver.py" if self._profile.get("sop_variant") == "r0-panel-host-terminal-v1" else "reference_driver_r1f.py"
+                overlay = Path(__file__).resolve().parent / overlay_name
                 protocol = Path(__file__).resolve().parent / "r1f_protocol.py"
                 image_index = command.index(image_id)
                 command[image_index:image_index] = [
-                    "-v", f"{overlay.resolve()}:/opt/clawgym_overlay/reference_driver_r1f.py:ro",
+                    "-v", f"{overlay.resolve()}:/opt/clawgym_overlay/{overlay_name}:ro",
                     "-v", f"{protocol.resolve()}:/opt/clawgym_overlay/r1f_protocol.py:ro",
                     "-e", "PYTHONPATH=/opt:/opt/clawgym_overlay:/opt/sregym",
                 ]
@@ -672,6 +673,8 @@ class SafeStratusRunner:
                     if self._materialization_bundle is None:
                         raise RuntimeError("materialized profile requires an explicit bundle")
                     mounts = _materialized_config_mounts(self._profile, self._materialization_bundle)
+                elif self._profile.get("sop_variant") == "r0-panel-host-terminal-v1":
+                    mounts = []
                 else:
                     mounts = _r1i_config_mounts(self._profile) if is_r1i else _r1f_config_mounts(self._profile)
                 command[image_index:image_index] = sum((['-v', mount] for mount in mounts), [])

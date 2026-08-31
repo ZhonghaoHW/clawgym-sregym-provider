@@ -29,6 +29,7 @@ _R1D_EXTRA = _R1B_EXTRA
 _R1E_EXTRA = _R1B_EXTRA
 _R1F_EXTRA = _R1B_EXTRA
 _R1I_EXTRA = _R1B_EXTRA
+_R0_PANEL_EXTRA = _R1B_EXTRA
 
 
 def load_reference_agent_profile(
@@ -45,6 +46,7 @@ def load_reference_agent_profile(
         root / "agent.reference-stratus-r1e.v1.json",
         root / "agent.reference-stratus-r1f.v1.json",
         root / "agent.reference-stratus-r1i.v1.json",
+        root / "agent.reference-stratus-r0-panel.v1.json",
     ]
     candidates = [candidate for candidate in candidates if candidate.is_file()]
     path = next(
@@ -169,6 +171,21 @@ def load_reference_agent_profile(
             raise ContractValidationError("R1i bounded execution policy is invalid")
         if not isinstance(document["config_bundle_digest"], str) or len(document["config_bundle_digest"]) != 64:
             raise ContractValidationError("R1i config bundle digest is invalid")
+    elif variant == "r0-panel-host-terminal-v1":
+        if document["model_id"] != "openai/deepseek-v4-pro":
+            raise ContractValidationError("R0 panel model must remain frozen")
+        if extra != _R0_PANEL_EXTRA:
+            raise ContractValidationError("R0 panel profile has invalid fields")
+        if document["command"] != ["python", "-m", "reference_driver"]:
+            raise ContractValidationError("R0 panel command is invalid")
+        if document["bounded_execution"] != {
+            "diagnosis_max_steps": 20,
+            "mitigation_max_steps": 20,
+            "container_timeout_seconds": 900,
+        }:
+            raise ContractValidationError("R0 panel bounded execution policy is invalid")
+        if not isinstance(document["config_bundle_digest"], str) or len(document["config_bundle_digest"]) != 64:
+            raise ContractValidationError("R0 panel config bundle digest is invalid")
     else:
         if extra and extra != {"sop_variant"}:
             raise ContractValidationError("reference agent profile has invalid fields")
