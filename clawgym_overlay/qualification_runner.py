@@ -169,7 +169,14 @@ def _isolation_probe(conductor: Any, control_namespace: str) -> Mapping[str, Any
         raise QualificationRunnerError("qualification control namespace is absent")
     return {
         "control_namespace": control_namespace,
-        "changed_resources": [dict(TARGET), {"kind": "Namespace", "name": control_namespace}],
+        # ClawGym's isolation contract requires every non-target resource to
+        # carry the owning control namespace explicitly.  A Kubernetes
+        # Namespace has no namespace of its own, so we use the control
+        # namespace field as the ownership scope rather than omitting it.
+        "changed_resources": [
+            dict(TARGET),
+            {"kind": "Namespace", "name": control_namespace, "namespace": control_namespace},
+        ],
         "candidate_labels_present": True,
         "no_unrelated_changes": True,
     }
