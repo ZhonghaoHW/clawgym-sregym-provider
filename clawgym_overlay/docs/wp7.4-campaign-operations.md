@@ -19,3 +19,13 @@ WP7.4 budgets three train trials and ten validation trials with at most two
 infrastructure retries globally.  Bundles and secrets stay outside Git.  ECS
 execution is not implied by the presence of this interface; it is admitted
 only after local gates and a human execution approval.
+
+## ECS attempt record (2026-08-31)
+
+The fresh WP7.4 checkout passed the ClawGym no-model readiness receipt on the
+four-node Kind host.  The E0 control was then started with the pinned
+Provider revision but stalled while the observe/Prometheus readiness barrier
+was waiting; it was terminated before any train or model invocation.  The
+temporary test namespaces were cleaned and the nodes returned Ready.  This is
+`WP74_INFRASTRUCTURE_BLOCKED` evidence, not an Oracle or agent-quality
+finding, and no candidate may be derived from it.
