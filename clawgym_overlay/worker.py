@@ -41,6 +41,36 @@ def _read_json(path: str | Path):
     return document
 
 
+def _verify_campaign_authorization(document: dict, *, candidate_digest: str, trial_digest: str, approval_digest: str, case_id: str, seed: int, partition: str, purpose: str, campaign_digest: str | None = None, generation: int | None = None) -> None:
+    """Use the ClawGym bridge when available, with a narrow compatibility
+    fallback for locked historical environments that predate WP7.4."""
+    try:
+        from clawgym.execution_bridge import verify_campaign_trial_authorization
+    except ImportError:
+        from clawgym.contracts import ContractValidationError, sha256_digest
+        expected = dict(document)
+        actual = expected.pop("authorization_digest", None)
+        if actual != sha256_digest(expected):
+            raise ContractValidationError("campaign authorization digest mismatch")
+        if document.get("schema_id") != "agent_evolution.campaign_trial_authorization.v1" or document.get("execution_scope") != "reference_family_only":
+            raise ContractValidationError("campaign authorization scope is invalid")
+        if document.get("purpose") != purpose or document.get("partition") != partition or document.get("case_id") != case_id or document.get("seed") != seed:
+            raise ContractValidationError("campaign authorization trial identity mismatch")
+        if document.get("candidate_digest") != candidate_digest or document.get("trial_digest") != trial_digest or document.get("approval_digest") != approval_digest:
+            raise ContractValidationError("campaign authorization digest references mismatch")
+        if campaign_digest is not None and document.get("campaign_digest") != campaign_digest:
+            raise ContractValidationError("campaign authorization campaign mismatch")
+        if generation is not None and document.get("generation") != generation:
+            raise ContractValidationError("campaign authorization generation mismatch")
+        return
+    verify_campaign_trial_authorization(
+        authorization_document=document, candidate_digest=candidate_digest,
+        trial_digest=trial_digest, approval_digest=approval_digest,
+        case_id=case_id, seed=seed, partition=partition, purpose=purpose,
+        campaign_digest=campaign_digest, generation=generation,
+    )
+
+
 def _binding(implementation) -> ProviderBinding:
     return ProviderBinding(
         ProviderDefinition(
@@ -118,6 +148,23 @@ def execute(args: argparse.Namespace) -> None:
     parent_document = _read_json(args.parent_agent_release) if getattr(args, "parent_agent_release", None) else None
     readiness_attestation_document = _read_json(args.readiness_attestation) if getattr(args, "readiness_attestation", None) else None
     e0_agent_release_document = _read_json(args.e0_agent_release) if getattr(args, "e0_agent_release", None) else None
+    campaign_authorization_document = _read_json(args.campaign_authorization) if getattr(args, "campaign_authorization", None) else None
+    if campaign_authorization_document is not None:
+        required_campaign = (candidate_document, trial_document, approval_document)
+        if any(document is None for document in required_campaign):
+            raise ValueError("campaign execution requires candidate, trial and approval documents")
+        _verify_campaign_authorization(
+            campaign_authorization_document,
+            candidate_digest=candidate_document["candidate_digest"],
+            trial_digest=trial_document["trial_digest"],
+            approval_digest=approval_document["approval_record_digest"],
+            case_id=run_document.get("case_id", trial_document.get("case_id")),
+            seed=run_document.get("seed", trial_document.get("seed")),
+            partition=trial_document.get("partition"),
+            purpose=campaign_authorization_document.get("purpose"),
+            campaign_digest=campaign_authorization_document.get("campaign_digest"),
+            generation=campaign_authorization_document.get("generation"),
+        )
     verify_release_revisions(agent_document, environment_document, args.provider_revision)
 
     from sregym.conductor.conductor import Conductor, ConductorConfig
@@ -315,6 +362,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--runtime-workdir")
     command.add_argument("--readiness-attestation")
     command.add_argument("--e0-agent-release")
+    command.add_argument("--campaign-authorization")
     command.set_defaults(handler=execute)
     return result
 
