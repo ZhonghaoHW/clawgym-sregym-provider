@@ -149,6 +149,23 @@ def execute(args: argparse.Namespace) -> None:
     readiness_attestation_document = _read_json(args.readiness_attestation) if getattr(args, "readiness_attestation", None) else None
     e0_agent_release_document = _read_json(args.e0_agent_release) if getattr(args, "e0_agent_release", None) else None
     campaign_authorization_document = _read_json(args.campaign_authorization) if getattr(args, "campaign_authorization", None) else None
+    campaign_document = _read_json(args.campaign) if getattr(args, "campaign", None) else None
+    campaign_plan_document = _read_json(args.campaign_plan) if getattr(args, "campaign_plan", None) else None
+    readiness_control_set_document = _read_json(args.readiness_control_set) if getattr(args, "readiness_control_set", None) else None
+    campaign_admission = None
+    if any(value is not None for value in (campaign_document, campaign_plan_document, readiness_control_set_document)):
+        if any(value is None for value in (campaign_document, campaign_plan_document, readiness_control_set_document)):
+            raise ValueError("campaign execution requires campaign, plan and readiness-control-set documents")
+        from clawgym.campaign_admission import verify_reference_campaign_admission
+        campaign_admission = verify_reference_campaign_admission(
+            campaign_document=campaign_document,
+            plan_document=campaign_plan_document,
+            readiness_control_set=readiness_control_set_document,
+            expected_clawgym_revision=args.clawgym_revision,
+            expected_provider_revision=args.provider_revision,
+            expected_environment_release_digest=environment_document.get("environment_release_digest"),
+            expected_deployment_lock_digest=campaign_document.get("deployment_lock_digest"),
+        )
     if campaign_authorization_document is not None:
         required_campaign = (candidate_document, trial_document, approval_document)
         if any(document is None for document in required_campaign):
@@ -173,6 +190,8 @@ def execute(args: argparse.Namespace) -> None:
     deployment_lock = load_deployment_lock(
         provider_root / "clawgym_overlay" / "deployment.wp4.lock.json"
     )
+    if campaign_admission is not None and campaign_document.get("deployment_lock_digest") != deployment_lock_digest(deployment_lock):
+        raise ValueError("campaign deployment lock does not match provider lock")
     execution_profile = load_release_manifests(
         provider_root / "clawgym_overlay" / "manifests"
     )["execution"]
@@ -280,6 +299,12 @@ def execute(args: argparse.Namespace) -> None:
         canonical_json_bytes(locked_runtime.cache_summary()),
         media_type="application/json",
     )
+    if campaign_admission is not None:
+        sink.write_bytes(
+            "host/campaign-admission.json",
+            canonical_json_bytes({"schema_id": "clawgym.campaign_admission_receipt.v1", "campaign_digest": campaign_admission[0], "plan_digest": campaign_admission[1], "provider_revision": args.provider_revision, "clawgym_revision": args.clawgym_revision}),
+            media_type="application/json",
+        )
     try:
         if run_document.get("lane") == "agent_validation" and args.materialization_bundle:
             from clawgym.execution_bridge import execute_approved_trial
@@ -363,6 +388,9 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--readiness-attestation")
     command.add_argument("--e0-agent-release")
     command.add_argument("--campaign-authorization")
+    command.add_argument("--campaign")
+    command.add_argument("--campaign-plan")
+    command.add_argument("--readiness-control-set")
     command.set_defaults(handler=execute)
     return result
 

@@ -93,3 +93,20 @@ The following checks are mandatory for every future environment bootstrap:
 The retained `host/source-checkouts.json` receipt is authoritative for the
 runtime SHA. A later documentation-only commit does not change the runtime
 identity of already released evidence.
+## Campaign v2 admission (post-E0.1)
+
+Before a WP7.4 campaign trial can reset the environment or call a model, the
+worker requires three explicit files: `--campaign`, `--campaign-plan`, and
+`--readiness-control-set`.  The campaign must bind the exact provider and
+ClawGym detached revisions, E0.1 EnvironmentRelease, deployment-lock digest,
+and exactly two passed readiness controls.  The plan is fixed to 13 semantic
+trials (three train, four rung-1, six rung-2), strict serial execution, two
+infrastructure retries and 15 attempts.  Any stale identity, plan mutation,
+duplicate readiness control or budget mismatch fails closed before lifecycle
+side effects.
+
+The readiness set is reference-only evidence.  It does not grant permission,
+change the Oracle, or select runtime behavior.  The worker records a redacted
+`clawgym.campaign_admission_receipt.v1` in the retained bundle after admission.
+Existing non-campaign and historical WP5/WP7.2 invocations retain their
+previous command and behavior.
