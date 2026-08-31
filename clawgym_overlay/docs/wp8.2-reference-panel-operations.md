@@ -19,3 +19,9 @@ use the same locked image/tool boundary, and retain all raw bundles outside
 Git. The panel result is `reference_environment_only`; it is a measurement of
 environment effect and agent outcomes, not a catalog promotion or
 cross-agent-conformance result.
+
+Local WP8.2 control-plane artifacts are retained outside Git. Panel digest is
+`16b37a5e7c96b02b351c03647fb03c857b4c2d33bef8ca890c6a877b184a77f1` and
+measurement-plan digest is
+`28d136d43ed610d90262afc50aa1edccc8b42dff2ec01d62521a011d8912ec7a`.
+The Provider has not executed an ECS panel trial yet.
