@@ -20,6 +20,10 @@ Git. The panel result is `reference_environment_only`; it is a measurement of
 environment effect and agent outcomes, not a catalog promotion or
 cross-agent-conformance result.
 
+The panel plan records a provider runtime revision per agent role. R0 remains
+on its frozen historical revision while the active Reference release uses its
+own pinned runtime; the worker must not silently substitute one for the other.
+
 An initial local plan with Provider `b041cd3…` was rejected before execution
 because the active Gen2-B release pins runtime `b3111a7…`; it remains retained
 as superseded preparation. The corrected plan uses that pinned runtime and
