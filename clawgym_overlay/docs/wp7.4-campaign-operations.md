@@ -65,3 +65,31 @@ kube-state-metrics tag to the locked `v2.9.2` value and keeps strict inventory
 verification. New E0.1 release identities are required for the retry; the
 historical controls remain frozen and excluded. Two complete controls under
 the new revision are required before any WP7.4 campaign trial is admitted.
+
+## Operator invariants learned from E0.1
+
+The following checks are mandatory for every future environment bootstrap:
+
+- Diagnose an error by lifecycle phase before interpreting its meaning. A
+  reset failure before fault injection or model invocation is an
+  infrastructure stop; `provider_unclassified` is not evidence of Agent
+  quality.
+- Pin both image tag and digest for every Helm chart and subchart. A locked
+  archive alone does not prevent a chart default from resolving to a different
+  live digest. Compare the deployed workload inventory with the deployment
+  lock before admitting a trial.
+- Keep bootstrap ordering explicit: create namespaces before PVCs, use bounded
+  atomic Helm waits, then require a healthy warm-up sample before the strict
+  steady-state connectivity window.
+- Runtime fixes receive new immutable Provider, release, run and evidence
+  identities. Never rewrite an old release or grant a failed attempt a hidden
+  semantic retry; an infrastructure retry needs a new claim and identity.
+- Require two consecutive no-model controls from a clean baseline. Each must
+  reach reset, fault, deterministic recovery, Oracle and cleanup and pass
+  offline provenance/attestation verification before train or validation.
+- Environment-validation controls are readiness evidence only. They must not
+  enter an Agent proposer or be counted as candidate performance.
+
+The retained `host/source-checkouts.json` receipt is authoritative for the
+runtime SHA. A later documentation-only commit does not change the runtime
+identity of already released evidence.
