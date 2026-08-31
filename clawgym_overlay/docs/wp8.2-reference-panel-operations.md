@@ -34,3 +34,11 @@ ClawGym `d75039e…`. Its panel digest is
 measurement-plan digest is
 `d9b4c9425453d9c73c636b4d56d7d642ce4c0ff0ae6e43a620c206f2880fcc23`.
 The Provider has not executed an ECS panel trial yet.
+
+Remote readiness note (2026-09-01): a no-model E0 control using the retained
+qualification runner completed after the locked Prometheus chart was restored
+in the cache. A first R0 panel invocation was rejected before fault/model work
+with the safe `filesystem_dependency_missing` diagnostic and then cleaned up.
+The retained error is excluded from panel aggregation. It demonstrates that
+the frozen R0 lock/runtime needs an explicit compatibility bridge before the
+panel can be admitted; it is not evidence of an agent or environment verdict.
