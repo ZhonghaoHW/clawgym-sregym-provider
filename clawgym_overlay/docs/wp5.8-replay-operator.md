@@ -18,10 +18,15 @@ checksum-locked deployment cache, workspace readability and four-node Kind
 readiness without creating an episode. A blocked receipt must be repaired and
 recreated before running the no-model E0 control release.
 
-The E0 control release uses the static `sregym.environment-validation.v1`
-adapter and Provider runtime reference `164f4924a99f98042adfd50a39772d1a0ed4f6ff`.
-It is not R1n evidence and must complete reset, fault, Oracle, recovery and
-cleanup before the R1n matrix. The fixed Provider checkout is not changed.
+The historical E0 control release uses the static
+`sregym.environment-validation.v1` adapter and Provider runtime reference
+`164f4924a99f98042adfd50a39772d1a0ed4f6ff`. It is not R1n evidence and must
+complete reset, fault, Oracle, recovery and cleanup before the R1n matrix.
+After the repeatability patch, do not run that historical release against the
+new checkout: the worker requires an exact runtime-reference match. Publish a
+new immutable E0.1 control release and a new R1n-compatible AgentRelease whose
+runtime reference is the new Provider commit; preserve the historical E0/R1n
+identities and evidence unchanged.
 
 Run case-001, case-002 and case-003 sequentially with the fixed seeds. A
 failed infrastructure attempt is retained and retried at most once with a new
@@ -42,7 +47,8 @@ Recreate Docker, Kind, kubectl, Helm, uv, the four-node Kind topology and the
 filtered kubeconfig/MCP setup, then inject the gateway key through a new
 `0600` secret file. The old readiness receipt only describes the old host and
 cannot be reused as proof for the new one. Run a new no-model readiness check,
-the E0 control, and then the three fixed R1n cases in order. Upload the new
+two consecutive E0.1 controls, and then the three fixed R1n-compatible cases
+in order. Upload the new
 bundles to a new external archive and create fresh provenance/attestation
 sidecars; never reuse an attempt identity or the attestation private key.
 

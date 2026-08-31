@@ -29,6 +29,7 @@ def lock_fixture():
         "calico-manifest": "manifest",
         "metrics-server-manifest": "manifest",
         "openebs-manifest": "manifest",
+        "prometheus-chart": "chart",
         "loki-chart": "chart",
         "promtail-chart": "chart",
         "runtime-image.application.recommendation": "image",
@@ -99,7 +100,11 @@ def test_complete_lock_has_stable_digest() -> None:
             "OCI identity",
         ),
         (
-            lambda document: document["artifacts"][11].update(platform_integrity="invalid"),
+            lambda document: next(
+                item
+                for item in document["artifacts"]
+                if item["name"] == "runtime-image.application.recommendation"
+            ).update(platform_integrity="invalid"),
             "platform_integrity",
         ),
         (
@@ -130,7 +135,7 @@ def test_committed_wp4_lock_is_valid_and_bound_by_execution_profile() -> None:
         (ROOT / "clawgym_overlay/manifests/execution.sregym-container.v1.json").read_text()
     )
 
-    assert len(document["artifacts"]) == 50
+    assert len(document["artifacts"]) == 51
     assert profile["deployment_lock_digest"] == deployment_lock_digest(document)
     openebs_images = [
         item

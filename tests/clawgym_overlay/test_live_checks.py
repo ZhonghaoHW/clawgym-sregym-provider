@@ -94,6 +94,45 @@ def test_reset_proves_the_declared_steady_state_window() -> None:
     assert sleeps == [5, 5]
 
 
+def test_reset_warms_up_before_starting_the_complete_steady_state_window() -> None:
+    probe, _, _ = phase_probe()
+    samples = iter((False, True, True, True))
+    sleeps = []
+    probe.conductor.current_problem.mitigation_oracle._run_recommendation_probe = (
+        lambda: next(samples)
+    )
+    probe.baseline_window_seconds = 10
+    probe.baseline_sample_interval_seconds = 5
+    probe.sleep = sleeps.append
+
+    result = probe("reset")
+
+    assert result["passed"] is True
+    diagnostic = result["baseline_connectivity_diagnostic"]
+    assert diagnostic["warmup_sample_count"] == 2
+    assert diagnostic["warmup_succeeded"] is True
+    assert diagnostic["sample_count"] == 3
+    assert diagnostic["healthy_sample_count"] == 3
+    assert sleeps == [5, 5, 5]
+
+
+def test_reset_still_fails_when_warmup_never_reaches_connectivity() -> None:
+    probe, _, _ = phase_probe()
+    probe.conductor.current_problem.mitigation_oracle._run_recommendation_probe = (
+        lambda: False
+    )
+    probe.baseline_window_seconds = 10
+    probe.baseline_sample_interval_seconds = 5
+    probe.sleep = lambda _: None
+
+    result = probe("reset")
+
+    assert result["passed"] is False
+    diagnostic = result["baseline_connectivity_diagnostic"]
+    assert diagnostic["warmup_succeeded"] is False
+    assert diagnostic["healthy_sample_count"] == 0
+
+
 def test_reset_requires_locked_runtime_image_inventory() -> None:
     probe, _, _ = phase_probe()
     probe.runtime_image_inventory = lambda: {

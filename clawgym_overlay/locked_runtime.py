@@ -191,22 +191,46 @@ class LockedRuntime:
         config.workload_image = self.image_reference("runtime-image.workload")
 
     def configure_services(self, conductor: Any) -> None:
-        # The Prometheus chart packages dependencies as .tgz files during
-        # install.  Pin the kube-state-metrics repository explicitly so the
-        # chart's registry prefix is not duplicated when resolving the locked
-        # image target.
+        # The vendored Prometheus chart already contains its dependency
+        # archives.  Runtime execution must never refresh them from a Helm
+        # repository: doing so makes a supposedly locked episode depend on
+        # external network availability and can change bytes between trials.
+        conductor.prometheus.helm_configs.update(
+            {
+                "chart_path": str(self.cached_artifact("prometheus-chart")),
+                "remote_chart": True,
+            }
+        )
         prometheus_args = conductor.prometheus.helm_configs.setdefault("extra_args", [])
-        if "kube-state-metrics.image.repository=kube-state-metrics/kube-state-metrics" not in prometheus_args:
-            prometheus_args.extend(
-                [
-                    "--set",
-                    "kube-state-metrics.image.repository=kube-state-metrics/kube-state-metrics",
-                ]
-            )
+        required_prometheus_args = (
+            "--set",
+            "kube-state-metrics.image.repository=kube-state-metrics/kube-state-metrics",
+            "--atomic",
+            "--wait",
+            "--wait-for-jobs",
+            "--timeout",
+            "300s",
+        )
+        required_fragments = (
+            required_prometheus_args[:2],
+            (required_prometheus_args[2],),
+            (required_prometheus_args[3],),
+            (required_prometheus_args[4],),
+            required_prometheus_args[5:],
+        )
+        for fragment in required_fragments:
+            width = len(fragment)
+            if not any(
+                tuple(prometheus_args[index : index + width]) == fragment
+                for index in range(len(prometheus_args) - width + 1)
+            ):
+                prometheus_args.extend(fragment)
         conductor.loki.helm_configs.update(
             {
                 "chart_path": str(self.cached_artifact("loki-chart")),
-                "remote_chart": False,
+                # The locked chart archive is complete and must not invoke a
+                # repository dependency refresh during an episode.
+                "remote_chart": True,
             }
         )
         conductor.loki.promtail_chart_path = str(self.cached_artifact("promtail-chart"))

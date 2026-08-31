@@ -24,6 +24,7 @@ REQUIRED_ARTIFACTS: Final = frozenset(
         "calico-manifest",
         "metrics-server-manifest",
         "openebs-manifest",
+        "prometheus-chart",
         "loki-chart",
         "promtail-chart",
         "runtime-image.mcp-server",

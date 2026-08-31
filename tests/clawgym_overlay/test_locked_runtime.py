@@ -27,18 +27,35 @@ def test_locked_runtime_configures_only_verified_assets_and_digest_images(tmp_pa
     assert config.openebs_manifest.endswith("openebs-manifest")
     assert all("@sha256:" in image for image in config.application_image_overrides.values())
     assert set(config.application_image_overrides) == {"runtime-image.application.recommendation"}
-    assert config.mcp_image.endswith("@sha256:" + "0" * 63 + "d")
-    assert config.workload_image.endswith("@sha256:" + "0" * 63 + "e")
+    expected_mcp = next(
+        item["source"].removeprefix("oci://")
+        for item in document["artifacts"]
+        if item["name"] == "runtime-image.mcp-server"
+    )
+    expected_workload = next(
+        item["source"].removeprefix("oci://")
+        for item in document["artifacts"]
+        if item["name"] == "runtime-image.workload"
+    )
+    assert config.mcp_image == expected_mcp
+    assert config.workload_image == expected_workload
 
     loki = SimpleNamespace(helm_configs={}, promtail_chart_path=None)
     prometheus = SimpleNamespace(helm_configs={})
     locked.configure_services(SimpleNamespace(loki=loki, prometheus=prometheus))
-    assert loki.helm_configs["remote_chart"] is False
+    assert loki.helm_configs["remote_chart"] is True
     assert loki.promtail_chart_path.endswith("promtail-chart")
     assert prometheus.helm_configs["extra_args"] == [
         "--set",
         "kube-state-metrics.image.repository=kube-state-metrics/kube-state-metrics",
+        "--atomic",
+        "--wait",
+        "--wait-for-jobs",
+        "--timeout",
+        "300s",
     ]
+    assert prometheus.helm_configs["remote_chart"] is True
+    assert prometheus.helm_configs["chart_path"].endswith("prometheus-chart")
 
     declared = {
         artifact["source"].removeprefix("oci://")
@@ -48,6 +65,30 @@ def test_locked_runtime_configures_only_verified_assets_and_digest_images(tmp_pa
     locked.verify_required_images(declared)
     with pytest.raises(LockedRuntimeError, match="absent"):
         locked.verify_required_images(declared | {"undeclared.example/image@sha256:" + "f" * 64})
+
+
+def test_configure_services_adds_atomic_helm_fragments_idempotently(tmp_path) -> None:
+    locked, _ = runtime(tmp_path)
+    conductor = SimpleNamespace(
+        loki=SimpleNamespace(helm_configs={}, promtail_chart_path=None),
+        prometheus=SimpleNamespace(
+            helm_configs={"extra_args": ["--set", "server.retention=1d"]}
+        ),
+    )
+
+    locked.configure_services(conductor)
+    locked.configure_services(conductor)
+
+    arguments = conductor.prometheus.helm_configs["extra_args"]
+    assert arguments.count("--set") == 2
+    assert arguments.count(
+        "kube-state-metrics.image.repository=kube-state-metrics/kube-state-metrics"
+    ) == 1
+    assert arguments.count("--atomic") == 1
+    assert arguments.count("--wait") == 1
+    assert arguments.count("--wait-for-jobs") == 1
+    assert arguments.count("--timeout") == 1
+    assert arguments.count("300s") == 1
 
 
 def test_locked_runtime_rejects_cache_tamper(tmp_path) -> None:

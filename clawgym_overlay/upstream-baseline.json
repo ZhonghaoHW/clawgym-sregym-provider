@@ -125,6 +125,14 @@
         "tests/clawgym_overlay/test_deployment_lock.py"
       ],
       "sha256": "b79d9b0b87e3fdfe5f5a87689b1237aee7b02f5d9a381e4a9a84c06267b7d2ef"
+    },
+    {
+      "path": "sregym/service/telemetry/prometheus.py",
+      "rationale": "clawgym_overlay/docs/core-patches/0003-repeatable-environment-bootstrap.md",
+      "tests": [
+        "tests/clawgym_overlay/test_prometheus_lifecycle.py"
+      ],
+      "sha256": "2ac3013dfd8f88923d44554b622b97874a152d8fd52b3f953c45bd3d58a59b70"
     }
   ]
 }

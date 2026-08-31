@@ -77,6 +77,20 @@ class Prometheus:
         self._delete_pvc()
         Helm.uninstall(**self.helm_configs)
 
+        # PVC creation precedes the Helm release, so --create-namespace on
+        # `helm install` is too late.  Create the namespace idempotently and
+        # verify it before applying the PVC.  This also closes the race where
+        # cleanup has only just removed the previous observe namespace.
+        kubectl = KubeCtl()
+        kubectl.exec_command(
+            f"kubectl create namespace {self.namespace} --dry-run=client -o yaml "
+            "| kubectl apply -f -"
+        )
+        try:
+            kubectl.core_v1_api.read_namespace(name=self.namespace)
+        except Exception as exc:
+            raise RuntimeError("Prometheus namespace admission failed") from exc
+
         if self.pvc_config_file:
             pvc_name = self._get_pvc_name_from_file(self.pvc_config_file)
             if not self._pvc_exists(pvc_name):

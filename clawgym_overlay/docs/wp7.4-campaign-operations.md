@@ -29,3 +29,25 @@ was waiting; it was terminated before any train or model invocation.  The
 temporary test namespaces were cleaned and the nodes returned Ready.  This is
 `WP74_INFRASTRUCTURE_BLOCKED` evidence, not an Oracle or agent-quality
 finding, and no candidate may be derived from it.
+
+## Root-cause correction after the rung-1 block
+
+The later campaign reached Gen1 training and produced passing Gen1 and
+Gen2-A rung-1 evidence, but Gen2-B exhausted its infrastructure retry budget.
+The failure chain was environmental: one reset observed transient baseline
+connectivity failure, and the retry encountered an unclassified recovery
+failure after the observability stack was rebuilt.  Neither attempt reached
+the Agent fault/repair path.
+
+Core patch 0003 separates bootstrap admission from the steady-state window.
+The locked runtime no longer refreshes vendored Helm dependencies during an
+episode, creates `observe` before its PVC, uses atomic bounded Helm readiness,
+and starts the 100%-success connectivity window only after one healthy warm-up
+sample.  Any later steady-state failure still fails closed.
+
+This is a new environment-bootstrap implementation and therefore requires a
+new Provider revision and EnvironmentRelease compatibility identity (E0.1)
+before remote use.  Historical E0 and the blocked WP7.4 attempts remain
+immutable.  The next campaign must use a new campaign identity and first pass
+two consecutive no-model E0.1 controls; it must not grant a third retry to the
+exhausted Gen2-B trial.

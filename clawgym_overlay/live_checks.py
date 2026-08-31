@@ -171,7 +171,20 @@ class SREGymLivePhaseProbe:
         }
 
     def _baseline_connectivity(self) -> tuple[bool, int, Mapping[str, Any]]:
-        samples = [self._connectivity_healthy()]
+        # Deployment readiness and service reachability do not become true at
+        # exactly the same instant.  First admit one healthy connectivity
+        # sample within a bounded warm-up period, then begin the declared
+        # 100%-success steady-state window.  A failure inside that window still
+        # fails closed; warm-up never weakens the E0 success ratio.
+        warmup_samples = [self._connectivity_healthy()]
+        warmup_remaining = self.baseline_window_seconds
+        while not warmup_samples[-1] and warmup_remaining > 0:
+            interval = min(self.baseline_sample_interval_seconds, warmup_remaining)
+            self.sleep(interval)
+            warmup_remaining -= interval
+            warmup_samples.append(self._connectivity_healthy())
+
+        samples = [warmup_samples[-1]]
         remaining = self.baseline_window_seconds
         while remaining > 0:
             interval = min(self.baseline_sample_interval_seconds, remaining)
@@ -185,6 +198,9 @@ class SREGymLivePhaseProbe:
             "sample_count": len(samples),
             "healthy_sample_count": sum(1 for sample in samples if sample),
             "samples_digest": sha256_digest({"samples": samples}),
+            "warmup_sample_count": len(warmup_samples),
+            "warmup_succeeded": warmup_samples[-1] is True,
+            "warmup_samples_digest": sha256_digest({"samples": warmup_samples}),
         }
         return healthy, len(samples), diagnostic
 
