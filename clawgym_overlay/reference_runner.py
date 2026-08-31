@@ -600,8 +600,9 @@ class SafeStratusRunner:
             env_file = Path(logs) / "agent.env"
             env_file.write_text(f"AGENT_API_KEY={key}\n", encoding="utf-8")
             env_file.chmod(0o600)
+            container_name = f"clawgym-agent-{run_manifest.manifest_digest[:16]}"
             command = [
-                "docker", "run", "--rm", "--network=host",
+                "docker", "run", "--rm", "--name", container_name, "--network=host",
                 "--add-host=host.docker.internal:host-gateway", "--read-only",
                 "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
                 "--cap-drop=ALL", "--security-opt=no-new-privileges",
@@ -685,6 +686,16 @@ class SafeStratusRunner:
                 transcript = completed.stdout + completed.stderr
                 exit_code = completed.returncode if completed.returncode >= 0 else 1
             except subprocess.TimeoutExpired as exc:
+                # ``docker run`` can outlive its client when the child is
+                # blocked in a network call.  Explicitly remove the
+                # deterministic container identity so timeout is a real
+                # lifecycle boundary and cleanup cannot be bypassed.
+                subprocess.run(
+                    ["docker", "rm", "-f", container_name],
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                )
                 transcript = (exc.stdout or b"") + (exc.stderr or b"") + b"\nreference-agent-timeout\n"
                 exit_code = 124
             digest = hashlib.sha256(transcript).hexdigest()
