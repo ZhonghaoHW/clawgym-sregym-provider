@@ -23,6 +23,8 @@ cross-agent-conformance result.
 The panel plan records a provider runtime revision per agent role. R0 remains
 on its frozen historical revision while the active Reference release uses its
 own pinned runtime; the worker must not silently substitute one for the other.
+Each panel trial must retain the provider revision used for that agent role so
+offline aggregation can reject a runtime substitution.
 
 Plans with a single provider revision or placeholder ClawGym SHA were rejected
 before execution and remain retained as superseded preparation. The corrected
