@@ -48,3 +48,19 @@ def test_panel_profile_disables_upstream_retry_pipeline() -> None:
     assert config["max_step"] == 8
     assert config["max_retry_attempts"] == 1
     assert config["retry_mode"] == "none"
+
+
+def test_panel_control_submits_each_host_stage(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def submit(*, ans):
+        calls.append(ans)
+
+    async def wait(**kwargs):
+        calls.append(kwargs["current_stage"])
+        return "mitigation" if kwargs["current_stage"] == "diagnosis" else "done"
+
+    monkeypatch.setattr(reference_driver, "manual_submit_tool", submit)
+    monkeypatch.setattr(reference_driver, "_wait_for_host_controlled_terminal", wait)
+    asyncio.run(reference_driver._panel_control_main())
+    assert calls == ["R0 panel diagnosis control", "diagnosis", "R0 panel mitigation control", "mitigation"]

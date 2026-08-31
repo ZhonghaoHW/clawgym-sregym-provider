@@ -8,6 +8,7 @@ upstream source and R0/R1 commands untouched.
 from __future__ import annotations
 
 import asyncio
+import os
 
 from clients.stratus.stratus_agent.driver import driver
 from clients.stratus.stratus_agent.diagnosis_agent import DiagnosisAgent
@@ -80,7 +81,29 @@ async def _wait_for_host_controlled_terminal(**kwargs):
     return "done" if result == "awaiting_cleanup" else result
 
 
+async def _panel_control_main() -> None:
+    """Run the non-model R0 panel control through the host lifecycle.
+
+    WP8.2 uses R0 as a regression control, not as an attributable repair
+    candidate.  Keeping this control deterministic avoids spending model calls
+    while still advancing the conductor through diagnosis and mitigation so
+    the host can evaluate Oracle and cleanup normally.
+    """
+    await manual_submit_tool(ans="R0 panel diagnosis control")
+    stage = await _wait_for_host_controlled_terminal(
+        current_stage="diagnosis", target_stages={"mitigation", "done"}
+    )
+    if stage == "mitigation":
+        await manual_submit_tool(ans="R0 panel mitigation control")
+        await _wait_for_host_controlled_terminal(
+            current_stage="mitigation", target_stages={"done"}
+        )
+
+
 def main() -> None:
+    if os.getenv("SREGYM_RUNTIME_PROTOCOL") == "r0-panel-host-terminal-v1":
+        asyncio.run(_panel_control_main())
+        return
     DiagnosisAgent.force_submit = _bounded_force_submit
     driver.wait_for_stage_switch = _wait_for_host_controlled_terminal
     driver.generate_run_summary = _bounded_generate_run_summary
