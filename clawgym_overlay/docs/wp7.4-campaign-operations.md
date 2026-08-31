@@ -51,3 +51,17 @@ before remote use.  Historical E0 and the blocked WP7.4 attempts remain
 immutable.  The next campaign must use a new campaign identity and first pass
 two consecutive no-model E0.1 controls; it must not grant a third retry to the
 exhausted Gen2-B trial.
+
+## E0.1 retry: locked image tag drift (2026-09-01)
+
+Two no-model E0.1 controls under the first bootstrap revision failed at reset
+with `provider_unclassified`; fault injection and model execution were never
+started. Inspection of the live workloads showed the Prometheus chart had
+selected a kube-state-metrics digest different from the deployment lock. The
+failure was deterministic chart-default drift, not an agent or Oracle result.
+
+Provider revision `829c48235b19544961c3fb9b54e92015d555496b` now pins the
+kube-state-metrics tag to the locked `v2.9.2` value and keeps strict inventory
+verification. New E0.1 release identities are required for the retry; the
+historical controls remain frozen and excluded. Two complete controls under
+the new revision are required before any WP7.4 campaign trial is admitted.
