@@ -66,3 +66,17 @@ five-asset cache and the required host PATH. These attempts are retained
 outside Git and excluded from panel aggregation. The active c65 runtime must
 not be relabeled as R0; a separately reviewed compatibility bridge or
 restorable historical runtime is required.
+
+### Frozen R0 restoration follow-up (2026-09-01)
+
+The exact R0 checkout was initialized with its tracked `SREGym-applications`
+submodule at the pinned revision, removing the missing Helm-chart dependency
+without changing R0. The restored legacy driver then reached `mitigation` but
+did not complete within the bounded attempt: diagnosis used 20 steps and
+produced an approximately 786k-input-token trace before reflection/retry. Only
+partial reset/fault evidence was retained; no lifecycle receipt or episode was
+counted. The sanitized archive is outside Git under
+`_artifacts/wp8-reference-environment/wp82/r0-failed-attempts-current/`.
+
+This is a legacy runtime budget/compatibility blocker. Do not substitute the
+active runtime, alter R0, or convert the partial attempt into a panel result.
