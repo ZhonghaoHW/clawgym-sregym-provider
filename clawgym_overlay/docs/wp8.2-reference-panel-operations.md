@@ -42,3 +42,16 @@ with the safe `filesystem_dependency_missing` diagnostic and then cleaned up.
 The retained error is excluded from panel aggregation. It demonstrates that
 the frozen R0 lock/runtime needs an explicit compatibility bridge before the
 panel can be admitted; it is not evidence of an agent or environment verdict.
+
+## Active Reference execution update (2026-09-01)
+
+The active Reference half was expanded to twelve serial observations in the
+same isolated ECS workspace. Both the same-runtime control and qualified
+candidate were run for case-001/002/003, repetitions 1 and 2. Eleven trials
+returned Oracle `pass`; control case-003/repetition-1 returned `fail` and its
+repetition-2 counterpart returned `pass`. This is retained as a flakiness
+observation. All runs completed cleanup and left the four-node baseline clean.
+
+The R0 exact-runtime half remains outstanding. Active Reference results must
+not be relabeled as R0 panel trials; WP8.2 remains blocked until all 24 matrix
+entries have explicit release/runtime, provenance and attestation bindings.
