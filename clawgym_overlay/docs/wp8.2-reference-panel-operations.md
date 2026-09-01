@@ -55,3 +55,14 @@ observation. All runs completed cleanup and left the four-node baseline clean.
 The R0 exact-runtime half remains outstanding. Active Reference results must
 not be relabeled as R0 panel trials; WP8.2 remains blocked until all 24 matrix
 entries have explicit release/runtime, provenance and attestation bindings.
+
+### Exact R0 compatibility attempts (2026-09-01)
+
+The frozen R0 release/runtime (`24c8522e…` / `cbe7b548…`) was exercised
+without substitution. Attempts `r1c`–`r1f` failed closed during reset with
+the safe diagnostic `filesystem_dependency_missing` (`FileNotFoundError`)
+before fault or model invocation, including after restoring the historical
+five-asset cache and the required host PATH. These attempts are retained
+outside Git and excluded from panel aggregation. The active c65 runtime must
+not be relabeled as R0; a separately reviewed compatibility bridge or
+restorable historical runtime is required.
