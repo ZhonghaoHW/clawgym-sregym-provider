@@ -80,3 +80,9 @@ counted. The sanitized archive is outside Git under
 
 This is a legacy runtime budget/compatibility blocker. Do not substitute the
 active runtime, alter R0, or convert the partial attempt into a panel result.
+
+The subsequent bounded retry used the restored submodule, historical cache and
+exact R0 release. It reached fault injection, then exhausted the 20-step
+diagnosis path (approximately 980k input tokens), reported `Mitigation Failed`
+and remained in `awaiting_cleanup`; no complete receipt or episode was
+counted. The attempt is archived outside Git and excluded from aggregation.
