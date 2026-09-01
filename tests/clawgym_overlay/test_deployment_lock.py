@@ -7,12 +7,14 @@ from pathlib import Path
 import pytest
 
 from clawgym.contracts import ContractValidationError
+from clawgym.contracts import sha256_digest
 from clawgym_overlay.deployment_lock import (
     deployment_lock_digest,
     load_deployment_lock,
     validate_deployment_lock,
 )
 from clawgym_overlay.worker import verify_formal_kind_topology, verify_release_revisions
+from clawgym_overlay.r0_panel_bridge import load_r0_panel_bridge, resolve_r0_panel_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -173,6 +175,27 @@ def test_worker_accepts_wp1_runtime_reference_wire_field() -> None:
         {"overlay_revision": revision},
         revision,
     )
+
+
+def test_r0_panel_compatibility_bridge_preserves_historical_release_identity() -> None:
+    bridge_path = ROOT / "clawgym_overlay/manifests/r0-panel-compatibility-bridge.v1.json"
+    bridge = load_r0_panel_bridge(bridge_path)
+    release = {
+        "agent_release_digest": bridge["r0_agent_release_digest"],
+        "invocation_profile_digest": bridge["historical_profile_digest"],
+        "runtime_reference": {"kind": "source_revision", "reference": bridge["historical_provider_revision"]},
+    }
+    environment = {"overlay_revision": bridge["historical_environment_overlay_revision"]}
+    verify_release_revisions(release, environment, "d" * 40, bridge)
+    profile = resolve_r0_panel_profile(bridge, agent_release=release, manifest_root=ROOT / "clawgym_overlay/manifests")
+    assert sha256_digest(profile) == bridge["effective_profile_digest"]
+    assert profile["sop_variant"] == "r0-panel-host-terminal-v1"
+
+
+def test_r0_panel_bridge_rejects_non_r0_release() -> None:
+    bridge = load_r0_panel_bridge(ROOT / "clawgym_overlay/manifests/r0-panel-compatibility-bridge.v1.json")
+    with pytest.raises(Exception, match="frozen R0|scoped"):
+        resolve_r0_panel_profile(bridge, agent_release={"agent_release_digest": "0" * 64}, manifest_root=ROOT / "clawgym_overlay/manifests")
 
 
 @pytest.mark.parametrize("field", ["value", "revision", "path"])

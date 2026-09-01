@@ -86,3 +86,15 @@ exact R0 release. It reached fault injection, then exhausted the 20-step
 diagnosis path (approximately 980k input tokens), reported `Mitigation Failed`
 and remained in `awaiting_cleanup`; no complete receipt or episode was
 counted. The attempt is archived outside Git and excluded from aggregation.
+
+### Explicit R0 compatibility bridge (local, 2026-09-01)
+
+The frozen R0 release remains immutable and continues to identify its historical
+profile/runtime.  A new, explicit bridge manifest maps only that exact release
+and profile to the already-reviewed deterministic panel wrapper.  The worker
+accepts the bridge only through an explicit `--r0-compatibility-bridge` path,
+validates its canonical digest and historical environment revision, and writes
+a redacted bridge receipt into the retained bundle.  No release-name discovery,
+profile override from caller text, or active-runtime relabeling is permitted.
+The bridge is covered by offline tests; ECS execution remains pending until the
+new provider checkout is deployed and the application namespaces are rebuilt.

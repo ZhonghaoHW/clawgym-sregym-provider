@@ -28,6 +28,7 @@ from clawgym_overlay.deployment_lock import deployment_lock_digest, load_deploym
 from clawgym_overlay.locked_runtime import LockedRuntime
 from clawgym_overlay.providers import SREGymEnvironmentValidationAdapter, SREGymReferenceAgentAdapter
 from clawgym_overlay.reference_profiles import load_reference_agent_profile, load_materialized_reference_profile
+from clawgym_overlay.r0_panel_bridge import load_r0_panel_bridge, resolve_r0_panel_profile
 from clawgym_overlay.reference_runner import SafeStratusRunner
 from clawgym_overlay.release import load_release_manifests
 from clawgym_overlay.validation_profiles import load_validation_profiles
@@ -91,12 +92,26 @@ def verify_formal_kind_topology(provider_root: Path, execution_profile: dict) ->
 
 
 def verify_release_revisions(
-    agent_document: dict, environment_document: dict, provider_revision: str
+    agent_document: dict, environment_document: dict, provider_revision: str,
+    compatibility_bridge: dict | None = None,
 ) -> None:
     environment_revision = environment_document.get("overlay_revision")
     if not isinstance(environment_revision, str) or len(environment_revision) != 40:
         raise ValueError("EnvironmentRelease does not identify an immutable overlay revision")
     runtime = agent_document.get("runtime_reference", {})
+    if compatibility_bridge is not None:
+        # The bridge is the sole, explicit exception for the frozen historical
+        # R0 release.  The current checkout still remains content addressed by
+        # provider_revision; only the old release/runtime pair is tolerated.
+        if agent_document.get("agent_release_digest") != compatibility_bridge["r0_agent_release_digest"]:
+            raise ValueError("compatibility bridge is not scoped to this AgentRelease")
+        if runtime != {"kind": "source_revision", "reference": compatibility_bridge["historical_provider_revision"]}:
+            raise ValueError("R0 historical runtime does not match compatibility bridge")
+        if environment_revision != compatibility_bridge["historical_environment_overlay_revision"]:
+            raise ValueError("R0 environment overlay does not match compatibility bridge")
+        if provider_revision == compatibility_bridge["historical_provider_revision"]:
+            raise ValueError("compatibility bridge requires the current executable provider checkout")
+        return
     if runtime != {"kind": "source_revision", "reference": provider_revision}:
         raise ValueError("validation AgentRelease does not identify the provider checkout")
 
@@ -152,6 +167,11 @@ def execute(args: argparse.Namespace) -> None:
     campaign_document = _read_json(args.campaign) if getattr(args, "campaign", None) else None
     campaign_plan_document = _read_json(args.campaign_plan) if getattr(args, "campaign_plan", None) else None
     readiness_control_set_document = _read_json(args.readiness_control_set) if getattr(args, "readiness_control_set", None) else None
+    compatibility_bridge_document = _read_json(args.r0_compatibility_bridge) if getattr(args, "r0_compatibility_bridge", None) else None
+    if compatibility_bridge_document is not None:
+        # Validate the on-disk bridge again at the point of use.  The argument
+        # is a path, never a caller-supplied digest or profile selector.
+        compatibility_bridge_document = load_r0_panel_bridge(args.r0_compatibility_bridge)
     campaign_admission = None
     if any(value is not None for value in (campaign_document, campaign_plan_document, readiness_control_set_document)):
         if any(value is None for value in (campaign_document, campaign_plan_document, readiness_control_set_document)):
@@ -182,7 +202,7 @@ def execute(args: argparse.Namespace) -> None:
             campaign_digest=campaign_authorization_document.get("campaign_digest"),
             generation=campaign_authorization_document.get("generation"),
         )
-    verify_release_revisions(agent_document, environment_document, args.provider_revision)
+    verify_release_revisions(agent_document, environment_document, args.provider_revision, compatibility_bridge_document)
 
     from sregym.conductor.conductor import Conductor, ConductorConfig
     from sregym.conductor.conductor_api import request_shutdown, run_api
@@ -246,6 +266,12 @@ def execute(args: argparse.Namespace) -> None:
             profile = load_materialized_reference_profile(args.materialization_bundle, profile_digest=agent_document.get("invocation_profile_digest"))
         else:
             profile = load_reference_agent_profile(manifest_root, profile_digest=agent_document.get("invocation_profile_digest"))
+        if compatibility_bridge_document is not None:
+            profile = resolve_r0_panel_profile(
+                compatibility_bridge_document,
+                agent_release=agent_document,
+                manifest_root=manifest_root,
+            )
         if agent_document.get("adapter_id") != profile["adapter_id"]:
             raise ValueError("AgentRelease does not identify the frozen reference adapter")
         expected_profile_digest = profile.get("profile_digest") or sha256_digest(profile)
@@ -300,6 +326,21 @@ def execute(args: argparse.Namespace) -> None:
         canonical_json_bytes(locked_runtime.cache_summary()),
         media_type="application/json",
     )
+    if compatibility_bridge_document is not None:
+        sink.write_bytes(
+            "host/r0-compatibility-bridge.json",
+            canonical_json_bytes(
+                {
+                    "schema_id": "clawgym.r0_panel_compatibility_receipt.v1",
+                    "bridge_digest": compatibility_bridge_document["bridge_digest"],
+                    "r0_agent_release_digest": compatibility_bridge_document["r0_agent_release_digest"],
+                    "historical_profile_digest": compatibility_bridge_document["historical_profile_digest"],
+                    "effective_profile_digest": compatibility_bridge_document["effective_profile_digest"],
+                    "provider_revision": args.provider_revision,
+                }
+            ),
+            media_type="application/json",
+        )
     if campaign_admission is not None:
         sink.write_bytes(
             "host/campaign-admission.json",
@@ -392,6 +433,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--campaign")
     command.add_argument("--campaign-plan")
     command.add_argument("--readiness-control-set")
+    command.add_argument("--r0-compatibility-bridge")
     command.set_defaults(handler=execute)
     return result
 

@@ -1,0 +1,11 @@
+{
+  "schema_id": "clawgym.r0_panel_compatibility_bridge.v1",
+  "bridge_id": "r0-panel-host-terminal-v1",
+  "scope": "reference_panel_control_only",
+  "r0_agent_release_digest": "24c8522e88e50eddff370a12963afd9d644ca6ce176a8981fc8fca592f90b2aa",
+  "historical_profile_digest": "ff41878ae0c027efa4d3002aafc08ab4f0704a5a460383a293344d8292060088",
+  "historical_provider_revision": "cbe7b5482cecf29d7e1cf73add81e7e146531d62",
+  "effective_profile_digest": "8ad9cdcf605bbde2e0ce19212d716301a102eddb489fc9d2091f93744aa1c257",
+  "historical_environment_overlay_revision": "bb4c708aed965b3bc2d537e75abcba00928007f9",
+  "bridge_digest": "9e0c9bff5cb09291434547abc790b833c812dbd58c141935b3b3624b719dacac"
+}
