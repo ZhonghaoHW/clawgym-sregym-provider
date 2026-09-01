@@ -98,3 +98,22 @@ a redacted bridge receipt into the retained bundle.  No release-name discovery,
 profile override from caller text, or active-runtime relabeling is permitted.
 The bridge is covered by offline tests; ECS execution remains pending until the
 new provider checkout is deployed and the application namespaces are rebuilt.
+
+### ECS bridge and panel completion (2026-09-01)
+
+The bridge was exercised on ECS with Provider
+`05d98e441ef7641d7805b7d214f9a45cc6273e25`: all twelve frozen-R0 panel runs
+completed serially and were archived outside Git. The previously missing
+active-Reference same-runtime case-001 repetition-2 was rerun with a new
+claim and completed using its materialized profile. Every retained bundle
+passed manifest/file-digest verification; 24 source-bound Provenance v2
+receipts and detached attestations were verified offline in a second process.
+
+The 24-trial report digest is
+`ee8943b61db58e80872a4b21ac23d4eb0b9b19bca17fb01ba0aa0e4da7d5064b` and is
+`reproducibility: flaky`: active Reference pass rates are 5/6 for the
+same-runtime control and 6/6 for the qualified candidate. R0 remains a
+non-attributable legacy control. The final cluster had four Ready nodes,
+baseline namespaces only and no agent containers. This measurement is
+`reference_environment_only` with recommendation `observe`; it is not a
+catalog transition or cross-agent conformance result.
