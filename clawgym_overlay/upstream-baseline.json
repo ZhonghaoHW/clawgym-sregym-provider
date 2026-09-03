@@ -51,6 +51,7 @@
     "docs/wp5.7-r1e-operations.md",
     "docs/wp7.3-ecs-paired-operations.md",
     "docs/wp8.3-joint-attribution-catalog.md",
+    ".github/workflows/assurance-gate.yml",
     ".github/workflows/smoke-test.yml",
     "tests/test_kubectl_tool_identity.py",
     "tests/kubectl_tool_tests/kubectl_tool_set_test.py",
