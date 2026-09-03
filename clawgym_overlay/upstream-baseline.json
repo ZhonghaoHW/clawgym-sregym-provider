@@ -79,7 +79,10 @@
     "tests/integration/smoke_test.py",
     "tests/__init__.py",
     "tests/kubectl_tool_tests/__init__.py",
-    "tests/file_editing/test_file_editing_tool.py"
+    "tests/file_editing/test_file_editing_tool.py",
+    "tests/test_filter_audit_requirements.py",
+    "tests/test_lockfile_hygiene.py",
+    "tests/test_verify_audit_coverage.py"
   ],
   "core_patches": [
     {
