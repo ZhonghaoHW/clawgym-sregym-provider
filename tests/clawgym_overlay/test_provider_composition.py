@@ -6,7 +6,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from clawgym.artifacts import FilesystemArtifactSink
 from clawgym.contracts import (
     AgentRelease,
@@ -24,18 +23,20 @@ from clawgym.providers import (
     ProviderRegistry,
 )
 from clawgym.runtime import LifecycleController
+
 from clawgym_overlay.composition import register_sregym_providers
 from clawgym_overlay.providers import (
     ReferenceAgentExecution,
+    SREGymEnvironmentProvider,
     SREGymEnvironmentValidationAdapter,
     SREGymObservationProvider,
-    SREGymReferenceAgentAdapter,
     SREGymOracleProvider,
+    SREGymReferenceAgentAdapter,
+    SREGymToolAccessProvider,
 )
 from clawgym_overlay.providers.sregym import _SREGymAccessHandle
-from clawgym_overlay.worker import verify_release_revisions
 from clawgym_overlay.release import build_environment_release, load_release_manifests
-
+from clawgym_overlay.worker import verify_release_revisions
 
 ROOT = Path(__file__).resolve().parents[2]
 NOW = "2026-08-24T12:00:00Z"
@@ -257,9 +258,7 @@ def test_failed_phase_postcondition_fails_receipt() -> None:
         },
     )
     environment = next(
-        binding.implementation
-        for binding in bindings
-        if binding.definition.provider_type == "environment_provider"
+        binding.implementation for binding in bindings if binding.definition.provider_type == "environment_provider"
     )
     run = SimpleNamespace(manifest_digest="a" * 64)
     outcome = environment.inject_fault(run)
@@ -358,10 +357,7 @@ def test_causal_observation_provider_requires_complete_successful_transition() -
             "window_started_at": NOW,
             "window_completed_at": NOW,
             "service_healthy": window != "fault",
-            "sources": {
-                source: dict(source_summary)
-                for source in ("prometheus", "loki", "jaeger")
-            },
+            "sources": {source: dict(source_summary) for source in ("prometheus", "loki", "jaeger")},
         }
         for window in ("baseline", "fault", "mitigation", "recovery")
     }
@@ -388,3 +384,71 @@ def test_causal_observation_provider_requires_complete_successful_transition() -
     windows["fault"]["sources"]["loki"]["status"] = "error"
     with pytest.raises(RuntimeError, match="failed query"):
         provider.collect(run)
+
+
+@pytest.mark.parametrize(
+    ("phase", "probe", "result", "expected"),
+    [
+        ("reset", {"abort_reasons": ["command-unavailable"]}, {}, "command_unavailable"),
+        ("reset", {"abort_reasons": ["deployment-cache-invalid"]}, {}, "deployment_cache_invalid"),
+        ("reset", {"abort_reasons": ["locked-asset-mismatch"]}, {}, "locked_asset_mismatch"),
+        ("reset", {"abort_reasons": ["filesystem-dependency-missing"]}, {}, "filesystem_dependency_missing"),
+        ("reset", {"abort_reasons": ["baseline-connectivity-failed"]}, {}, "baseline_connectivity_failed"),
+        ("reset", {"abort_reasons": ["telemetry-unavailable"]}, {}, "telemetry_unavailable"),
+        ("reset", {"abort_reasons": ["kind-node-not-ready"]}, {}, "cluster_not_ready"),
+        ("reset", {"connectivity_healthy": False}, {}, "baseline_connectivity_unhealthy"),
+        ("fault", {}, {"status": "failed"}, "provider_bootstrap_failed"),
+        ("fault", {}, {}, "provider_unclassified"),
+    ],
+)
+def test_diagnostic_code_maps_each_provider_failure_class(phase, probe, result, expected: str) -> None:
+    code, _dependency = SREGymEnvironmentProvider._diagnostic_code(phase, probe, result)
+    assert code == expected
+
+
+def test_environment_provider_marks_cleanup_and_skipped_results_failed() -> None:
+    conductor = FakeConductor()
+    run = SimpleNamespace(manifest_digest="a" * 64)
+    provider = SREGymEnvironmentProvider(
+        conductor,
+        "b" * 64,
+        "network_policy_block",
+        ("mitigation",),
+        phase_probe=lambda _phase: {"passed": True},
+        clock=lambda: NOW,
+    )
+    cleanup = provider._call("cleanup", run, lambda: {"status": "cleanup_failed"})
+    assert cleanup.status == "failed"
+    skipped = provider._call("reset", run, lambda: {"status": "skipped-by-policy"})
+    assert skipped.status == "failed"
+
+
+def test_tool_access_rejects_failed_verification_and_wrong_handle() -> None:
+    conductor = FakeConductor()
+    run = SimpleNamespace(manifest_digest="a" * 64)
+    provider = SREGymToolAccessProvider(
+        conductor,
+        "b" * 64,
+        ("read",),
+        ("get",),
+        ("kube-system",),
+        access_verifier=lambda _path: {"passed": False},
+    )
+    with pytest.raises(RuntimeError, match="verification"):
+        provider.grant(run)
+    grant = SimpleNamespace(handle=object())
+    with pytest.raises(RuntimeError, match="handle"):
+        provider.revoke(run, grant)
+
+
+def test_environment_validation_adapter_records_failed_delete_or_probe() -> None:
+    run = SimpleNamespace(lane="environment_validation", manifest_digest="a" * 64)
+    adapter = SREGymEnvironmentValidationAdapter(
+        "b" * 64,
+        lambda *_args: {"deleted": False},
+        steady_state_probe=lambda: False,
+        telemetry_capture=lambda *_args: {"queries_succeeded": False},
+        clock=lambda: NOW,
+    )
+    result = adapter.invoke(run, _SREGymAccessHandle("/tmp/filtered"))
+    assert result.outcome.status == "failed"

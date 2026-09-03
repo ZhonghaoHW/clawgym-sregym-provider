@@ -1,5 +1,9 @@
 """Concrete ClawGym provider implementations backed by SREGym seams."""
 
+from clawgym_overlay.providers.reference_agent import (
+    ReferenceAgentExecution,
+    SREGymReferenceAgentAdapter,
+)
 from clawgym_overlay.providers.sregym import (
     SREGymEnvironmentProvider,
     SREGymEnvironmentValidationAdapter,
@@ -7,10 +11,6 @@ from clawgym_overlay.providers.sregym import (
     SREGymObservationProvider,
     SREGymOracleProvider,
     SREGymToolAccessProvider,
-)
-from clawgym_overlay.providers.reference_agent import (
-    ReferenceAgentExecution,
-    SREGymReferenceAgentAdapter,
 )
 
 __all__ = [

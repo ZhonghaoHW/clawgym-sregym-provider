@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from clawgym.contracts import sha256_digest
 from clawgym.contracts.validation import ContractValidationError, reject_forbidden_content
@@ -13,7 +13,10 @@ from clawgym.contracts.validation import ContractValidationError, reject_forbidd
 def _load(path: Path, expected: set[str], schema_id: str) -> dict[str, Any]:
     with path.open(encoding="utf-8") as handle:
         document = json.load(handle)
-    if not isinstance(document, dict) or set(document) != expected:
+    if not isinstance(document, dict):
+        raise ContractValidationError(f"{path.name} has invalid fields")
+    document = cast(dict[str, Any], document)
+    if set(document) != expected:
         raise ContractValidationError(f"{path.name} has invalid fields")
     if document["schema_id"] != schema_id:
         raise ContractValidationError(f"{path.name} has invalid schema_id")
@@ -52,9 +55,6 @@ def load_validation_profiles(manifest_root: str | Path) -> tuple[dict[str, Any],
         "model_access": False,
     }:
         raise ContractValidationError("environment validation profile exceeds its fixed authority")
-    if (
-        sink["write_mode"] != "exclusive-atomic-json"
-        or sink["sensitive_content_rejection"] is not True
-    ):
+    if sink["write_mode"] != "exclusive-atomic-json" or sink["sensitive_content_rejection"] is not True:
         raise ContractValidationError("retained sink profile is unsafe")
     return adapter, sink

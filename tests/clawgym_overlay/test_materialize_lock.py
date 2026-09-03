@@ -3,17 +3,22 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import runpy
 import subprocess
+import sys
+import urllib.request
+from pathlib import Path
 
 import pytest
+from test_deployment_lock import lock_fixture
 
 from clawgym_overlay.locked_runtime import LockedRuntimeError
 from clawgym_overlay.materialize_lock import (
+    main,
     materialize_assets,
     preload_runtime_images,
     resolve_node_platform_digest,
 )
-from test_deployment_lock import lock_fixture
 
 
 def asset_payloads(document):
@@ -76,10 +81,7 @@ def test_preload_images_uses_only_locked_sources_and_declared_targets() -> None:
     assert all(call[0][7:8] == ("remove",) for call in removals)
     pulls = calls[1::6]
     assert all(call[0][0:3] == ("docker", "exec", "--privileged") for call in pulls)
-    assert all(
-        call[0][8:12] == ("--local", "--skip-metadata", "--platform", "linux/amd64")
-        for call in pulls
-    )
+    assert all(call[0][8:12] == ("--local", "--skip-metadata", "--platform", "linux/amd64") for call in pulls)
     assert all("latest" not in call[0][12] for call in pulls)
     exports = calls[3::6]
     assert all(call[0][7:10] == ("export", "--platform", "linux/amd64") for call in exports)
@@ -119,9 +121,7 @@ def test_preload_retries_transient_control_plane_pull() -> None:
 
     def transient_pull(command, **kwargs):
         nonlocal attempts
-        if command[7:12] == (
-            "pull", "--local", "--skip-metadata", "--platform", "linux/amd64"
-        ):
+        if command[7:12] == ("pull", "--local", "--skip-metadata", "--platform", "linux/amd64"):
             attempts += 1
             if attempts < 3:
                 raise subprocess.CalledProcessError(1, command)
@@ -230,13 +230,16 @@ def test_resolve_node_platform_digest_selects_locked_linux_amd64_child() -> None
             ).encode(),
         )
 
-    assert resolve_node_platform_digest(
-        "formal-control-plane",
-        "registry.example/image@" + index_digest,
-        index_digest,
-        "linux/amd64",
-        runner=run,
-    ) == platform_digest
+    assert (
+        resolve_node_platform_digest(
+            "formal-control-plane",
+            "registry.example/image@" + index_digest,
+            index_digest,
+            "linux/amd64",
+            runner=run,
+        )
+        == platform_digest
+    )
 
 
 def test_preload_rejects_platform_digest_mismatch() -> None:
@@ -249,6 +252,182 @@ def test_preload_rejects_platform_digest_mismatch() -> None:
             nodes=("formal-control-plane",),
             ready_checker=lambda node, source: True,
             host_seeder=lambda artifact, source, nodes: False,
-            platform_digest_resolver=lambda node, source, integrity, platform: "sha256:"
-            + "f" * 64,
+            platform_digest_resolver=lambda node, source, integrity, platform: "sha256:" + "f" * 64,
         )
+
+
+@pytest.mark.parametrize(
+    "cluster_name",
+    ["Bad_Name", "-bad", "1bad", "a" * 64, ""],
+)
+def test_preload_rejects_invalid_cluster_names(cluster_name: str) -> None:
+    with pytest.raises(LockedRuntimeError, match="cluster name"):
+        preload_runtime_images(lock_fixture(), cluster_name, nodes=("formal-control-plane",))
+
+
+@pytest.mark.parametrize(
+    "nodes",
+    [
+        (),
+        ("formal-control-plane", "formal-control-plane"),
+        ("formal-worker",),
+        ("formal-control-plane", "formal-worker-control-plane"),
+    ],
+)
+def test_preload_rejects_unsafe_node_inventory(nodes: tuple[str, ...]) -> None:
+    with pytest.raises(LockedRuntimeError, match="node inventory"):
+        preload_runtime_images(lock_fixture(), "clawgym-formal", nodes=nodes)
+
+
+def test_resolve_platform_digest_rejects_malformed_or_ambiguous_descriptor() -> None:
+    index = "sha256:" + "a" * 64
+    child = "sha256:" + "b" * 64
+
+    def listed_only(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout="header\nshort\n")
+
+    with pytest.raises(LockedRuntimeError, match="descriptor is missing"):
+        resolve_node_platform_digest("node", "image@" + index, index, "linux/amd64", runner=listed_only)
+
+    def malformed_json(command, **kwargs):
+        if command[6:8] == ("images", "list"):
+            return subprocess.CompletedProcess(command, 0, stdout=f"h\nsource t {index} 1\n")
+        return subprocess.CompletedProcess(command, 0, stdout=b"not-json")
+
+    with pytest.raises(LockedRuntimeError, match="descriptor is invalid"):
+        resolve_node_platform_digest("node", "image@" + index, index, "linux/amd64", runner=malformed_json)
+
+    def non_object(command, **kwargs):
+        if command[6:8] == ("images", "list"):
+            return subprocess.CompletedProcess(command, 0, stdout=f"h\nsource t {index} 1\n")
+        return subprocess.CompletedProcess(command, 0, stdout=b"[]")
+
+    with pytest.raises(LockedRuntimeError, match="descriptor is invalid"):
+        resolve_node_platform_digest("node", "image@" + index, index, "linux/amd64", runner=non_object)
+
+    def malformed_manifests(command, **kwargs):
+        if command[6:8] == ("images", "list"):
+            return subprocess.CompletedProcess(command, 0, stdout=f"h\nsource t {index} 1\n")
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps({"manifests": ["bad"]}).encode())
+
+    with pytest.raises(LockedRuntimeError, match="descriptor is invalid"):
+        resolve_node_platform_digest("node", "image@" + index, index, "linux/amd64", runner=malformed_manifests)
+
+    def ambiguous(command, **kwargs):
+        if command[6:8] == ("images", "list"):
+            return subprocess.CompletedProcess(command, 0, stdout=f"h\nsource t {index} 1\n")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "manifests": [
+                        {"digest": child, "platform": {"os": "linux", "architecture": "amd64"}},
+                        {"digest": child, "platform": {"os": "linux", "architecture": "amd64"}},
+                    ]
+                }
+            ).encode(),
+        )
+
+    with pytest.raises(LockedRuntimeError, match="ambiguous"):
+        resolve_node_platform_digest("node", "image@" + index, index, "linux/amd64", runner=ambiguous)
+
+
+def test_resolve_platform_digest_returns_node_digest_when_descriptor_differs() -> None:
+    expected = "sha256:" + "a" * 64
+    actual = "sha256:" + "c" * 64
+
+    def run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout=f"h\nsource t {actual} 1\n")
+
+    assert resolve_node_platform_digest("node", "image@" + expected, expected, "linux/amd64", runner=run) == actual
+
+
+def test_resolve_platform_digest_accepts_single_platform_descriptor_without_manifests() -> None:
+    digest = "sha256:" + "a" * 64
+
+    def run(command, **kwargs):
+        if command[6:8] == ("images", "list"):
+            return subprocess.CompletedProcess(command, 0, stdout=f"h\nsource t {digest} 1\n")
+        return subprocess.CompletedProcess(
+            command, 0, stdout=b'{"mediaType":"application/vnd.oci.image.manifest.v1+json"}'
+        )
+
+    assert resolve_node_platform_digest("node", "image@" + digest, digest, "linux/amd64", runner=run) == digest
+
+
+def test_resolve_platform_digest_rejects_non_list_and_non_mapping_platform() -> None:
+    index = "sha256:" + "a" * 64
+
+    def run(command, **kwargs):
+        if command[6:8] == ("images", "list"):
+            return subprocess.CompletedProcess(command, 0, stdout=f"h\nsource t {index} 1\n")
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps({"manifests": {}}).encode())
+
+    with pytest.raises(LockedRuntimeError, match="descriptor is invalid"):
+        resolve_node_platform_digest("node", "image@" + index, index, "linux/amd64", runner=run)
+
+    def bad_platform(command, **kwargs):
+        if command[6:8] == ("images", "list"):
+            return subprocess.CompletedProcess(command, 0, stdout=f"h\nsource t {index} 1\n")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"manifests": [{"platform": "linux/amd64", "digest": index}]}).encode(),
+        )
+
+    with pytest.raises(LockedRuntimeError, match="descriptor is invalid"):
+        resolve_node_platform_digest("node", "image@" + index, index, "linux/amd64", runner=bad_platform)
+
+
+def test_materialize_assets_cleans_partial_file_when_opener_fails(tmp_path) -> None:
+    document = lock_fixture()
+
+    def fail_open(_url):
+        raise OSError("network unavailable")
+
+    with pytest.raises(OSError, match="network unavailable"):
+        materialize_assets(document, tmp_path, opener=fail_open)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_materialize_assets_requires_existing_regular_empty_directory(tmp_path) -> None:
+    missing = tmp_path / "missing"
+    with pytest.raises(LockedRuntimeError, match="existing regular directory"):
+        materialize_assets(lock_fixture(), missing, opener=lambda _: io.BytesIO())
+    occupied = tmp_path / "occupied"
+    occupied.mkdir()
+    (occupied / "keep").touch()
+    with pytest.raises(LockedRuntimeError, match="empty"):
+        materialize_assets(lock_fixture(), occupied, opener=lambda _: io.BytesIO())
+
+
+def test_materialize_lock_cli_uses_explicit_subcommand(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("clawgym_overlay.materialize_lock.load_deployment_lock", lambda _: lock_fixture())
+    monkeypatch.setattr("clawgym_overlay.materialize_lock.materialize_assets", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(
+        sys, "argv", ["clawgym-materialize-lock", "--lock", "lock.json", "assets", "--cache-root", "cache"]
+    )
+    main()
+    assert capsys.readouterr().out.strip() == '{"ok":true}'
+
+
+def test_materialize_lock_module_entrypoint_executes_assets(tmp_path, monkeypatch, capsys) -> None:
+    document = lock_fixture()
+    payloads = asset_payloads(document)
+    lock_path = tmp_path / "lock.json"
+    lock_path.write_text(json.dumps(document), encoding="utf-8")
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    def open_asset(url: str):
+        return io.BytesIO(payloads[url])
+
+    monkeypatch.setattr(urllib.request, "urlopen", open_asset)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["clawgym-materialize-lock", "--lock", str(lock_path), "assets", "--cache-root", str(cache)],
+    )
+    runpy.run_path(str(Path(__file__).parents[2] / "clawgym_overlay" / "materialize_lock.py"), run_name="__main__")
+    assert json.loads(capsys.readouterr().out)["asset_count"] > 0

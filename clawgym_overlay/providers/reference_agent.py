@@ -10,7 +10,7 @@ from typing import Any
 from clawgym.contracts import RunManifest, sha256_digest
 from clawgym.providers import AgentInvocationResult, EvidencePayload, LifecycleOutcome
 
-from clawgym_overlay.providers.sregym import _SREGymAccessHandle, _outcome, _utc_now
+from clawgym_overlay.providers.sregym import SREGymAccessHandle, utc_now
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,20 +49,18 @@ class SREGymReferenceAgentAdapter:
 
     immutable_configuration_digest: str
     execute_stratus: Callable[[RunManifest, str], ReferenceAgentExecution]
-    clock: Callable[[], str] = _utc_now
+    clock: Callable[[], str] = utc_now
     provider_id: str = field(default="sregym.reference-agent.v1", init=False)
     provider_type: str = field(default="agent_adapter", init=False)
 
     def invoke(self, run_manifest: RunManifest, access_handle: object) -> AgentInvocationResult:
         if run_manifest.lane != "agent_validation":
             raise RuntimeError("reference agent requires agent_validation lane")
-        if not isinstance(access_handle, _SREGymAccessHandle):
+        if not isinstance(access_handle, SREGymAccessHandle):
             raise RuntimeError("reference agent requires filtered SREGym access")
         started_at = self.clock()
         started = time.monotonic()
         execution = self.execute_stratus(run_manifest, access_handle.kubeconfig_path)
-        if not isinstance(execution, ReferenceAgentExecution):
-            raise RuntimeError("reference agent runner returned an invalid result")
         duration_ms = max(execution.duration_ms, int((time.monotonic() - started) * 1000))
         completed_at = self.clock()
         status = "succeeded" if execution.exit_code == 0 else "failed"
@@ -108,43 +106,55 @@ class SREGymReferenceAgentAdapter:
                 )
             )
         if execution.diagnosis_handoff is not None:
-            evidence.append(EvidencePayload(
-                artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-diagnosis-handoff.json",
-                document=dict(execution.diagnosis_handoff),
-            ))
+            evidence.append(
+                EvidencePayload(
+                    artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-diagnosis-handoff.json",
+                    document=dict(execution.diagnosis_handoff),
+                )
+            )
         if execution.action_ledger is not None:
-            ledger_name = "sregym-agent-action-ledger.v2.json" if execution.action_ledger.get("schema_id") == "clawgym.sregym_agent_action_ledger.v2" else "sregym-agent-action-ledger.json"
-            evidence.append(EvidencePayload(
-                artifact_key=f"runs/{run_manifest.manifest_digest}/{ledger_name}",
-                document=dict(execution.action_ledger),
-            ))
+            ledger_name = (
+                "sregym-agent-action-ledger.v2.json"
+                if execution.action_ledger.get("schema_id") == "clawgym.sregym_agent_action_ledger.v2"
+                else "sregym-agent-action-ledger.json"
+            )
+            evidence.append(
+                EvidencePayload(
+                    artifact_key=f"runs/{run_manifest.manifest_digest}/{ledger_name}",
+                    document=dict(execution.action_ledger),
+                )
+            )
         if execution.remediation_transaction is not None:
             transaction_name = (
                 "sregym-remediation-transaction.v2.json"
-                if execution.remediation_transaction.get("schema_id")
-                == "clawgym.sregym_remediation_transaction.v2"
+                if execution.remediation_transaction.get("schema_id") == "clawgym.sregym_remediation_transaction.v2"
                 else "sregym-remediation-transaction.json"
             )
-            evidence.append(EvidencePayload(
-                artifact_key=f"runs/{run_manifest.manifest_digest}/{transaction_name}",
-                document=dict(execution.remediation_transaction),
-            ))
+            evidence.append(
+                EvidencePayload(
+                    artifact_key=f"runs/{run_manifest.manifest_digest}/{transaction_name}",
+                    document=dict(execution.remediation_transaction),
+                )
+            )
         if execution.verification_observation is not None:
             verification_name = (
                 "sregym-verification-observation.v2.json"
-                if execution.verification_observation.get("schema_id")
-                == "clawgym.sregym_verification_observation.v2"
+                if execution.verification_observation.get("schema_id") == "clawgym.sregym_verification_observation.v2"
                 else "sregym-verification-observation.json"
             )
-            evidence.append(EvidencePayload(
-                artifact_key=f"runs/{run_manifest.manifest_digest}/{verification_name}",
-                document=dict(execution.verification_observation),
-            ))
+            evidence.append(
+                EvidencePayload(
+                    artifact_key=f"runs/{run_manifest.manifest_digest}/{verification_name}",
+                    document=dict(execution.verification_observation),
+                )
+            )
         if execution.gate_event_journal is not None:
-            evidence.append(EvidencePayload(
-                artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-gate-event-journal.json",
-                document=dict(execution.gate_event_journal),
-            ))
+            evidence.append(
+                EvidencePayload(
+                    artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-gate-event-journal.json",
+                    document=dict(execution.gate_event_journal),
+                )
+            )
         return AgentInvocationResult(
             outcome=LifecycleOutcome(
                 phase="agent_invocation",
@@ -152,7 +162,7 @@ class SREGymReferenceAgentAdapter:
                 status=status,
                 started_at=started_at,
                 completed_at=completed_at,
-            evidence=tuple(evidence),
+                evidence=tuple(evidence),
             ),
             submission=execution.submission,
             amount=execution.amount,

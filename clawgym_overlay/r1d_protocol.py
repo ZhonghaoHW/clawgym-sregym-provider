@@ -10,32 +10,52 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
-
+from typing import Any, cast
 
 TARGET = {"kind": "NetworkPolicy", "namespace": "hotel-reservation", "name": "deny-all-recommendation"}
-HANDOFF_FIELDS = ("symptom", "target_component", "evidence", "root_cause_hypothesis", "candidate_resource", "minimal_remediation", "verification_plan")
+HANDOFF_FIELDS = (
+    "symptom",
+    "target_component",
+    "evidence",
+    "root_cause_hypothesis",
+    "candidate_resource",
+    "minimal_remediation",
+    "verification_plan",
+)
 VALID_STAGES = {"diagnosis", "mitigation", "awaiting_cleanup", "done", "error"}
+
+
+def _object(value: Any) -> Mapping[str, Any] | None:
+    """Narrow untyped JSON values at the trajectory boundary."""
+    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else None
 
 
 def _digest(document: Mapping[str, Any], field: str) -> str:
     value = {k: v for k, v in document.items() if k != field}
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
 
 
-def validate_handoff(document: Mapping[str, Any], *, run_manifest_digest: str, agent_release_digest: str) -> dict[str, Any]:
+def validate_handoff(
+    document: Mapping[str, Any], *, run_manifest_digest: str, agent_release_digest: str
+) -> dict[str, Any]:
     """Validate and return a canonical handoff projection, failing closed."""
     if document.get("schema_id") != "clawgym.sregym_diagnosis_handoff.v2":
         raise ValueError("R1d handoff schema is invalid")
     if document.get("status") != "complete":
         raise ValueError("R1d handoff is incomplete")
-    if document.get("run_manifest_digest") != run_manifest_digest or document.get("agent_release_digest") != agent_release_digest:
+    if (
+        document.get("run_manifest_digest") != run_manifest_digest
+        or document.get("agent_release_digest") != agent_release_digest
+    ):
         raise ValueError("R1d handoff identity mismatch")
     if any(not document.get(field) for field in HANDOFF_FIELDS):
         raise ValueError("R1d handoff fields are incomplete")
     resource = document.get("candidate_resource")
-    if not isinstance(resource, Mapping) or dict(resource) != TARGET:
+    if (_object(resource) or {}) != TARGET:
         raise ValueError("R1d handoff target is not the declared resource")
     if document.get("handoff_digest") != _digest(document, "handoff_digest"):
         raise ValueError("R1d handoff digest mismatch")
@@ -48,48 +68,92 @@ def reduce_tool_events(events: Iterable[Mapping[str, Any]]) -> tuple[dict[str, A
     order: list[str] = []
     pending_results: dict[str, str] = {}
     for snapshot in events:
-        messages = snapshot.get("messages", snapshot)
+        messages: Any = snapshot.get("messages", snapshot)
         if not isinstance(messages, list):
             continue
-        for message in messages:
-            if not isinstance(message, Mapping):
+        for raw_message in cast(list[Any], messages):
+            message = _object(raw_message)
+            if message is None:
                 continue
-            for call in message.get("tool_calls", []) if isinstance(message.get("tool_calls"), list) else []:
-                if not isinstance(call, Mapping):
-                    continue
+            raw_calls: Any = message.get("tool_calls", [])
+            for raw_call in cast(list[Any], raw_calls) if isinstance(raw_calls, list) else []:
+                call = _object(raw_call) or {}
                 call_id = str(call.get("id", ""))
                 if not call_id:
                     continue
                 if call_id not in calls:
-                    args = call.get("args", call.get("function", {}).get("arguments", {}))
+                    function = _object(call.get("function")) or {}
+                    args = call.get("args", function.get("arguments", {}))
                     if isinstance(args, str):
                         try:
                             args = json.loads(args)
                         except json.JSONDecodeError:
                             args = {}
-                    command = str(args.get("command", "")) if isinstance(args, Mapping) else ""
+                    args_object = _object(args) or {}
+                    command = str(args_object.get("command", ""))
                     lower = command.lower()
-                    if str(call.get("name", call.get("function", {}).get("name", ""))) in {"submit_tool", "f_submit_tool", "manual_submit_tool"}:
+                    if str(call.get("name", function.get("name", ""))) in {
+                        "submit_tool",
+                        "f_submit_tool",
+                        "manual_submit_tool",
+                    }:
                         operation = "submit"
                     elif lower.startswith(("kubectl get", "kubectl describe", "kubectl logs")):
                         operation = "read"
-                    elif lower.startswith(tuple("kubectl " + verb for verb in ("apply", "patch", "delete", "replace", "create", "edit", "rollout", "scale", "set"))):
+                    elif lower.startswith(
+                        tuple(
+                            "kubectl " + verb
+                            for verb in (
+                                "apply",
+                                "patch",
+                                "delete",
+                                "replace",
+                                "create",
+                                "edit",
+                                "rollout",
+                                "scale",
+                                "set",
+                            )
+                        )
+                    ):
                         operation = "mutate"
                     else:
                         operation = "unknown"
-                    calls[call_id] = {"id": call_id, "tool": str(call.get("name", call.get("function", {}).get("name", "unknown"))), "operation": operation, "command": command, "response": pending_results.pop(call_id, "")}
+                    calls[call_id] = {
+                        "id": call_id,
+                        "tool": str(call.get("name", function.get("name", "unknown"))),
+                        "operation": operation,
+                        "command": command,
+                        "response": pending_results.pop(call_id, ""),
+                    }
                     order.append(call_id)
             tool_call_id = message.get("tool_call_id")
             if tool_call_id and str(tool_call_id) in calls:
                 calls[str(tool_call_id)]["response"] = str(message.get("content", ""))
             elif tool_call_id:
                 pending_results[str(tool_call_id)] = str(message.get("content", ""))
-    result = []
+    result: list[dict[str, Any]] = []
     for sequence, call_id in enumerate(order, 1):
         item = calls[call_id]
         response = item["response"].lower()
-        outcome = "unknown" if not response else "rejected" if ("forbidden" in response or "command rejected" in response) else "failed" if ("error" in response or "exception" in response) else "executed"
-        result.append({"sequence": sequence, "tool": item["tool"], "operation": item["operation"], "command_sha256": hashlib.sha256(item["command"].encode()).hexdigest(), "outcome": outcome})
+        outcome = (
+            "unknown"
+            if not response
+            else "rejected"
+            if ("forbidden" in response or "command rejected" in response)
+            else "failed"
+            if ("error" in response or "exception" in response)
+            else "executed"
+        )
+        result.append(
+            {
+                "sequence": sequence,
+                "tool": item["tool"],
+                "operation": item["operation"],
+                "command_sha256": hashlib.sha256(item["command"].encode()).hexdigest(),
+                "outcome": outcome,
+            }
+        )
     return tuple(result)
 
 
@@ -103,33 +167,41 @@ class R1dGate:
     reread_done: bool = False
     verification_done: bool = False
 
-    def accept_handoff(self, handoff: Mapping[str, Any], *, run_manifest_digest: str, agent_release_digest: str) -> "R1dGate":
+    def accept_handoff(
+        self, handoff: Mapping[str, Any], *, run_manifest_digest: str, agent_release_digest: str
+    ) -> R1dGate:
         validate_handoff(handoff, run_manifest_digest=run_manifest_digest, agent_release_digest=agent_release_digest)
         return R1dGate(True, self.preconditions_verified, self.mutation_count, self.reread_done, self.verification_done)
 
-    def verify_preconditions(self, *, policy_exists: bool) -> "R1dGate":
+    def verify_preconditions(self, *, policy_exists: bool) -> R1dGate:
         if not self.handoff_validated or not policy_exists:
             raise ValueError("R1d preconditions are not satisfied")
         return R1dGate(True, True, self.mutation_count, self.reread_done, self.verification_done)
 
-    def record_mutation(self) -> "R1dGate":
+    def record_mutation(self) -> R1dGate:
         if not self.preconditions_verified or self.mutation_count >= 1:
             raise ValueError("R1d mutation is outside the one-mutation gate")
         return R1dGate(True, True, 1, False, False)
 
-    def record_reread(self) -> "R1dGate":
+    def record_reread(self) -> R1dGate:
         if self.mutation_count != 1:
             raise ValueError("R1d reread requires one mutation")
         return R1dGate(True, True, 1, True, self.verification_done)
 
-    def record_verification(self) -> "R1dGate":
+    def record_verification(self) -> R1dGate:
         if not self.reread_done:
             raise ValueError("R1d verification requires reread")
         return R1dGate(True, True, 1, True, True)
 
     @property
     def may_submit(self) -> bool:
-        return self.handoff_validated and self.preconditions_verified and self.mutation_count == 1 and self.reread_done and self.verification_done
+        return (
+            self.handoff_validated
+            and self.preconditions_verified
+            and self.mutation_count == 1
+            and self.reread_done
+            and self.verification_done
+        )
 
 
 def conductor_transition(stage: str, *, handoff_validated: bool) -> str:

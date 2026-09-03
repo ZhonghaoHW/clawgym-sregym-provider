@@ -11,15 +11,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def isolated_method(path: Path, class_name: str, method_name: str, namespace):
     parsed = ast.parse(path.read_text())
-    class_node = next(
-        node for node in parsed.body if isinstance(node, ast.ClassDef) and node.name == class_name
-    )
+    class_node = next(node for node in parsed.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     function = next(
         node
         for node in class_node.body
@@ -93,11 +90,7 @@ def test_hotel_application_renders_every_locked_image_override(tmp_path: Path) -
             {
                 "kind": "Deployment",
                 "metadata": {"name": "recommendation"},
-                "spec": {
-                    "template": {
-                        "spec": {"containers": [{"name": "app", "image": "image:latest"}]}
-                    }
-                },
+                "spec": {"template": {"spec": {"containers": [{"name": "app", "image": "image:latest"}]}}},
             }
         )
     )
@@ -108,14 +101,11 @@ def test_hotel_application_renders_every_locked_image_override(tmp_path: Path) -
 
     with rendered(app) as rendered_path:
         document = json.loads((rendered_path / "deployment.yaml").read_text())
-        assert document["spec"]["template"]["spec"]["containers"][0]["image"].endswith(
-            "a" * 64
-        )
+        assert document["spec"]["template"]["spec"]["containers"][0]["image"].endswith("a" * 64)
 
     app.deployment_image_overrides = {"missing": "image@sha256:" + "b" * 64}
-    with pytest.raises(RuntimeError, match="image override targets were not found"):
-        with rendered(app):
-            pass
+    with pytest.raises(RuntimeError, match="image override targets were not found"), rendered(app):
+        pass
 
 
 def test_mcp_server_renders_digest_override_without_mutating_source() -> None:
@@ -165,9 +155,8 @@ def test_mcp_server_rejects_mutable_image_override() -> None:
     )
     server = type("Server", (), {})()
     server.image_override = "ghcr.io/sregym/sregym-mcp:latest"
-    with pytest.raises(RuntimeError, match="immutable"):
-        with deployment_resources(server):
-            pass
+    with pytest.raises(RuntimeError, match="immutable"), deployment_resources(server):
+        pass
 
 
 def test_wrk_job_uses_configured_immutable_image(tmp_path: Path) -> None:

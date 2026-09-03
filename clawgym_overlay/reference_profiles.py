@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from clawgym.contracts import sha256_digest
 from clawgym.contracts.validation import ContractValidationError, reject_forbidden_content
-
 
 _BASE_EXPECTED = {
     "schema_id",
@@ -23,6 +22,21 @@ _BASE_EXPECTED = {
     "runtime_variable",
 }
 
+
+def load_materialized_reference_profile(
+    manifest_root: str | Path, *, profile_digest: str | None = None
+) -> dict[str, Any]:
+    """Compatibility façade for callers of the historical profile module.
+
+    Materialized profiles are validated by the active typed loader.  Keeping
+    this lazy façade preserves the old import path without making the frozen
+    profile definitions part of the active execution graph.
+    """
+    from clawgym_overlay.materialized_profile import load_materialized_reference_profile as load_active_profile
+
+    return load_active_profile(manifest_root, profile_digest=profile_digest)
+
+
 _R1B_EXTRA = {"sop_variant", "bounded_execution", "config_bundle_digest"}
 _R1C_EXTRA = _R1B_EXTRA
 _R1D_EXTRA = _R1B_EXTRA
@@ -32,9 +46,7 @@ _R1I_EXTRA = _R1B_EXTRA
 _R0_PANEL_EXTRA = _R1B_EXTRA
 
 
-def load_reference_agent_profile(
-    manifest_root: str | Path, *, profile_digest: str | None = None
-) -> dict[str, Any]:
+def load_reference_agent_profile(manifest_root: str | Path, *, profile_digest: str | None = None) -> dict[str, Any]:
     root = Path(manifest_root)
     candidates = [
         root / "agent.reference-stratus.v1.json",
@@ -50,14 +62,20 @@ def load_reference_agent_profile(
     ]
     candidates = [candidate for candidate in candidates if candidate.is_file()]
     path = next(
-        (candidate for candidate in candidates if profile_digest is None or sha256_digest(json.loads(candidate.read_text(encoding="utf-8"))) == profile_digest),
+        (
+            candidate
+            for candidate in candidates
+            if profile_digest is None
+            or sha256_digest(json.loads(candidate.read_text(encoding="utf-8"))) == profile_digest
+        ),
         None,
     )
     if path is None:
         raise ContractValidationError("reference agent profile digest is not registered")
     document = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(document, dict) or not _BASE_EXPECTED.issubset(document):
+    if not isinstance(document, dict) or not _BASE_EXPECTED.issubset(cast(dict[str, Any], document)):
         raise ContractValidationError("reference agent profile has invalid fields")
+    document = cast(dict[str, Any], document)
     extra = set(document) - _BASE_EXPECTED
     reject_forbidden_content(document)
     if document["schema_id"] != "clawgym.sregym_reference_agent_profile.v1":
@@ -74,10 +92,7 @@ def load_reference_agent_profile(
         raise ContractValidationError("reference agent model is not registered")
     if document["api_base"] != "https://st8tp3ajl0df3n8b8l8qu.apigateway-cn-beijing.volceapi.com/v1":
         raise ContractValidationError("reference agent endpoint must remain frozen")
-    if (
-        document["runtime_injection"] != "host-only-file"
-        or document["runtime_variable"] != "AGENT_API_KEY"
-    ):
+    if document["runtime_injection"] != "host-only-file" or document["runtime_variable"] != "AGENT_API_KEY":
         raise ContractValidationError("reference agent runtime injection policy is invalid")
     variant = document.get("sop_variant", "r0-baseline")
     if variant == "r1-evidence-first-bounded-v1":
@@ -115,7 +130,11 @@ def load_reference_agent_profile(
             raise ContractValidationError("R1c fallback model is invalid")
         if extra != _R1C_EXTRA or document["command"] != ["python", "-m", "reference_driver_r1c"]:
             raise ContractValidationError("R1c fallback profile has invalid fields")
-        if document["bounded_execution"] != {"diagnosis_max_steps": 8, "mitigation_max_steps": 8, "container_timeout_seconds": 900}:
+        if document["bounded_execution"] != {
+            "diagnosis_max_steps": 8,
+            "mitigation_max_steps": 8,
+            "container_timeout_seconds": 900,
+        }:
             raise ContractValidationError("R1c fallback bounds are invalid")
         if not isinstance(document["config_bundle_digest"], str) or len(document["config_bundle_digest"]) != 64:
             raise ContractValidationError("R1c fallback config bundle digest is invalid")
@@ -126,7 +145,11 @@ def load_reference_agent_profile(
             raise ContractValidationError("R1d reference profile has invalid fields")
         if document["command"] != ["python", "-m", "reference_driver_r1d"]:
             raise ContractValidationError("R1d reference command is invalid")
-        if document["bounded_execution"] != {"diagnosis_max_steps": 8, "mitigation_max_steps": 8, "container_timeout_seconds": 900}:
+        if document["bounded_execution"] != {
+            "diagnosis_max_steps": 8,
+            "mitigation_max_steps": 8,
+            "container_timeout_seconds": 900,
+        }:
             raise ContractValidationError("R1d bounded execution policy is invalid")
         if not isinstance(document["config_bundle_digest"], str) or len(document["config_bundle_digest"]) != 64:
             raise ContractValidationError("R1d config bundle digest is invalid")
@@ -137,7 +160,11 @@ def load_reference_agent_profile(
             raise ContractValidationError("R1e reference profile has invalid fields")
         if document["command"] != ["python", "-m", "reference_driver_r1e"]:
             raise ContractValidationError("R1e reference command is invalid")
-        if document["bounded_execution"] != {"diagnosis_max_steps": 8, "mitigation_max_steps": 8, "container_timeout_seconds": 900}:
+        if document["bounded_execution"] != {
+            "diagnosis_max_steps": 8,
+            "mitigation_max_steps": 8,
+            "container_timeout_seconds": 900,
+        }:
             raise ContractValidationError("R1e bounded execution policy is invalid")
         if not isinstance(document["config_bundle_digest"], str) or len(document["config_bundle_digest"]) != 64:
             raise ContractValidationError("R1e config bundle digest is invalid")
@@ -193,35 +220,4 @@ def load_reference_agent_profile(
             raise ContractValidationError("reference agent command must remain frozen")
         if variant not in {"r0-baseline", "r1-evidence-first"}:
             raise ContractValidationError("reference agent profile variant is invalid")
-    return document
-
-
-def load_materialized_reference_profile(bundle_root: str | Path, *, profile_digest: str | None = None) -> dict[str, Any]:
-    """Load one explicit WP7.1 materialization bundle; never scan a directory."""
-    root = Path(bundle_root).resolve(strict=True)
-    path = root / "profile.json"
-    if not path.is_file() or path.is_symlink():
-        raise ContractValidationError("materialized profile must be an explicit regular file")
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ContractValidationError("materialized profile is invalid JSON") from exc
-    if not isinstance(document, dict) or document.get("schema_id") != "clawgym.sregym_reference_agent_profile.v2":
-        raise ContractValidationError("materialized profile schema is invalid")
-    declared = document.get("profile_digest")
-    payload = dict(document); payload.pop("profile_digest", None)
-    if not isinstance(declared, str) or sha256_digest(payload) != declared or (profile_digest is not None and declared != profile_digest):
-        raise ContractValidationError("materialized profile digest mismatch")
-    if document.get("adapter_id") != "sregym.reference-agent.v1" or document.get("runtime_injection") != "host-only-file":
-        raise ContractValidationError("materialized profile boundary is invalid")
-    if document.get("command") != ["python", "-m", "reference_driver_r1f"]:
-        raise ContractValidationError("materialized profile command is not the pinned Reference driver")
-    if document.get("runtime_protocol") != "r1i-typed-handoff-journal-v1":
-        raise ContractValidationError("materialized profile runtime protocol is not the pinned typed protocol")
-    if document.get("handoff_argument_protocol") != "structured-submit-tool-argument-v1":
-        raise ContractValidationError("materialized profile handoff argument protocol is invalid")
-    bounded = document.get("bounded_execution")
-    if not isinstance(bounded, dict) or bounded.get("container_timeout_seconds") != 900:
-        raise ContractValidationError("materialized profile timeout is not frozen")
-    reject_forbidden_content(document)
     return document

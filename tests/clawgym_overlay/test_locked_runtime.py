@@ -4,9 +4,9 @@ import hashlib
 from types import SimpleNamespace
 
 import pytest
+from test_deployment_lock import lock_fixture
 
 from clawgym_overlay.locked_runtime import LockedRuntime, LockedRuntimeError
-from test_deployment_lock import lock_fixture
 
 
 def runtime(tmp_path):
@@ -60,9 +60,7 @@ def test_locked_runtime_configures_only_verified_assets_and_digest_images(tmp_pa
     assert prometheus.helm_configs["chart_path"].endswith("prometheus-chart")
 
     declared = {
-        artifact["source"].removeprefix("oci://")
-        for artifact in document["artifacts"]
-        if artifact["kind"] == "image"
+        artifact["source"].removeprefix("oci://") for artifact in document["artifacts"] if artifact["kind"] == "image"
     }
     locked.verify_required_images(declared)
     with pytest.raises(LockedRuntimeError, match="absent"):
@@ -73,9 +71,7 @@ def test_configure_services_adds_atomic_helm_fragments_idempotently(tmp_path) ->
     locked, _ = runtime(tmp_path)
     conductor = SimpleNamespace(
         loki=SimpleNamespace(helm_configs={}, promtail_chart_path=None),
-        prometheus=SimpleNamespace(
-            helm_configs={"extra_args": ["--set", "server.retention=1d"]}
-        ),
+        prometheus=SimpleNamespace(helm_configs={"extra_args": ["--set", "server.retention=1d"]}),
     )
 
     locked.configure_services(conductor)
@@ -83,9 +79,7 @@ def test_configure_services_adds_atomic_helm_fragments_idempotently(tmp_path) ->
 
     arguments = conductor.prometheus.helm_configs["extra_args"]
     assert arguments.count("--set") == 3
-    assert arguments.count(
-        "kube-state-metrics.image.repository=kube-state-metrics/kube-state-metrics"
-    ) == 1
+    assert arguments.count("kube-state-metrics.image.repository=kube-state-metrics/kube-state-metrics") == 1
     assert arguments.count("kube-state-metrics.image.tag=v2.9.2") == 1
     assert arguments.count("--atomic") == 1
     assert arguments.count("--wait") == 1
@@ -115,11 +109,7 @@ def test_locked_runtime_rejects_extra_cache_content(tmp_path) -> None:
 
 def test_cluster_inventory_compares_content_digests_without_exporting_identities(tmp_path) -> None:
     locked, document = runtime(tmp_path)
-    declared = next(
-        item
-        for item in document["artifacts"]
-        if item["name"].startswith("runtime-image.")
-    )
+    declared = next(item for item in document["artifacts"] if item["name"].startswith("runtime-image."))
     status = SimpleNamespace(
         name="application",
         image_id=f"runtime@{declared['platform_integrity']}",
@@ -143,11 +133,7 @@ def test_cluster_inventory_compares_content_digests_without_exporting_identities
 
 def test_cluster_inventory_accepts_index_digest_reported_by_containerd(tmp_path) -> None:
     locked, document = runtime(tmp_path)
-    declared = next(
-        item
-        for item in document["artifacts"]
-        if item["name"].startswith("runtime-image.")
-    )
+    declared = next(item for item in document["artifacts"] if item["name"].startswith("runtime-image."))
     status = SimpleNamespace(
         name="application",
         image_id=f"runtime@{declared['integrity']}",
@@ -172,7 +158,9 @@ def test_cluster_inventory_accepts_bare_containerd_sha256(tmp_path) -> None:
     declared = next(item for item in document["artifacts"] if item["name"].startswith("runtime-image."))
     status = SimpleNamespace(name="application", image_id=declared["platform_integrity"])
     pod = SimpleNamespace(
-        spec=SimpleNamespace(init_containers=[], containers=[SimpleNamespace(name="application", image=declared["target"])]),
+        spec=SimpleNamespace(
+            init_containers=[], containers=[SimpleNamespace(name="application", image=declared["target"])]
+        ),
         status=SimpleNamespace(init_container_statuses=[], container_statuses=[status]),
     )
     core = SimpleNamespace(list_pod_for_all_namespaces=lambda: SimpleNamespace(items=[pod]))

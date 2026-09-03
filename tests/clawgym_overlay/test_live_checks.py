@@ -3,10 +3,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from clawgym_overlay.live_checks import (
+    SafeTelemetryQuery,
     SREGymCausalTelemetryRecorder,
     SREGymLivePhaseProbe,
     SREGymLiveTelemetrySnapshotter,
-    SafeTelemetryQuery,
     build_kubernetes_telemetry_snapshotter,
 )
 
@@ -98,9 +98,7 @@ def test_reset_warms_up_before_starting_the_complete_steady_state_window() -> No
     probe, _, _ = phase_probe()
     samples = iter((False, True, True, True))
     sleeps = []
-    probe.conductor.current_problem.mitigation_oracle._run_recommendation_probe = (
-        lambda: next(samples)
-    )
+    probe.conductor.current_problem.mitigation_oracle._run_recommendation_probe = lambda: next(samples)
     probe.baseline_window_seconds = 10
     probe.baseline_sample_interval_seconds = 5
     probe.sleep = sleeps.append
@@ -118,9 +116,7 @@ def test_reset_warms_up_before_starting_the_complete_steady_state_window() -> No
 
 def test_reset_still_fails_when_warmup_never_reaches_connectivity() -> None:
     probe, _, _ = phase_probe()
-    probe.conductor.current_problem.mitigation_oracle._run_recommendation_probe = (
-        lambda: False
-    )
+    probe.conductor.current_problem.mitigation_oracle._run_recommendation_probe = lambda: False
     probe.baseline_window_seconds = 10
     probe.baseline_sample_interval_seconds = 5
     probe.sleep = lambda _: None

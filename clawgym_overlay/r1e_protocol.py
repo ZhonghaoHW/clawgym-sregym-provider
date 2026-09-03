@@ -12,7 +12,6 @@ import json
 import shlex
 from dataclasses import dataclass, field
 
-
 TARGET = {"kind": "NetworkPolicy", "namespace": "hotel-reservation", "name": "deny-all-recommendation"}
 
 
@@ -31,7 +30,13 @@ def parse_command(command: str) -> tuple[str, dict[str, str]]:
     if len(tokens) < 2 or tokens[0] != "kubectl":
         return "unknown", {"kind": "", "namespace": "", "name": ""}
     verb = tokens[1]
-    operation = "read" if verb in {"get", "describe", "logs", "events", "top", "api-resources", "version"} else "mutate" if verb in {"delete", "apply", "patch", "replace", "create", "edit", "rollout", "scale", "set"} else "unknown"
+    operation = (
+        "read"
+        if verb in {"get", "describe", "logs", "events", "top", "api-resources", "version"}
+        else "mutate"
+        if verb in {"delete", "apply", "patch", "replace", "create", "edit", "rollout", "scale", "set"}
+        else "unknown"
+    )
     kind = tokens[2] if len(tokens) > 2 else ""
     name = ""
     if len(tokens) > 3 and not tokens[3].startswith("-"):
@@ -46,16 +51,29 @@ def parse_command(command: str) -> tuple[str, dict[str, str]]:
 
 
 def validate_handoff(document: dict[str, object], *, run_manifest_digest: str, agent_release_digest: str) -> bool:
-    required = {"schema_id", "status", "run_manifest_digest", "agent_release_digest", "candidate_resource", "handoff_digest"}
+    required = {
+        "schema_id",
+        "status",
+        "run_manifest_digest",
+        "agent_release_digest",
+        "candidate_resource",
+        "handoff_digest",
+    }
     if not required.issubset(document) or document.get("schema_id") != "clawgym.sregym_diagnosis_handoff.v2":
         return False
-    if document.get("status") != "complete" or document.get("run_manifest_digest") != run_manifest_digest or document.get("agent_release_digest") != agent_release_digest:
+    if (
+        document.get("status") != "complete"
+        or document.get("run_manifest_digest") != run_manifest_digest
+        or document.get("agent_release_digest") != agent_release_digest
+    ):
         return False
     target = document.get("candidate_resource")
     if target != TARGET:
         return False
     payload = {key: value for key, value in document.items() if key != "handoff_digest"}
-    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
     return document.get("handoff_digest") == digest
 
 
@@ -69,7 +87,7 @@ class R1eGate:
     mutation_executed: bool = False
     target_reread: bool = False
     endpoint_ready: bool = False
-    events: list[dict[str, object]] = field(default_factory=list)
+    events: list[dict[str, object]] = field(default_factory=lambda: [])
 
     def record(self, command: str, result: str, *, stage: str) -> bool:
         operation, resource = parse_command(command)
@@ -83,18 +101,42 @@ class R1eGate:
                 self.target_reread = "notfound" in lower or "not found" in lower
                 allowed = True
             elif resource.get("name") == "recommendation" or "recommendation" in command.lower():
-                self.endpoint_ready = any(marker in lower for marker in ("ready", "addresses", "endpoint")) and "not ready" not in lower
+                self.endpoint_ready = (
+                    any(marker in lower for marker in ("ready", "addresses", "endpoint")) and "not ready" not in lower
+                )
                 allowed = True
             else:
                 allowed = True
         elif operation == "mutate":
-            allowed = stage == "mitigation" and self.handoff_validated and self.precondition_read and resource == TARGET and command.strip().startswith("kubectl delete") and self.mutation_count == 0
+            allowed = (
+                stage == "mitigation"
+                and self.handoff_validated
+                and self.precondition_read
+                and resource == TARGET
+                and command.strip().startswith("kubectl delete")
+                and self.mutation_count == 0
+            )
             if allowed:
                 self.mutation_count += 1
                 self.mutation_executed = "error" not in lower and "rejected" not in lower
-        self.events.append({"command_sha256": hashlib.sha256(command.encode()).hexdigest(), "operation": operation, "resource": resource, "stage": stage, "allowed": allowed, "result": "rejected" if not allowed else "executed"})
+        self.events.append(
+            {
+                "command_sha256": hashlib.sha256(command.encode()).hexdigest(),
+                "operation": operation,
+                "resource": resource,
+                "stage": stage,
+                "allowed": allowed,
+                "result": "rejected" if not allowed else "executed",
+            }
+        )
         return allowed
 
     @property
     def may_submit(self) -> bool:
-        return self.handoff_validated and self.mutation_count == 1 and self.mutation_executed and self.target_reread and self.endpoint_ready
+        return (
+            self.handoff_validated
+            and self.mutation_count == 1
+            and self.mutation_executed
+            and self.target_reread
+            and self.endpoint_ready
+        )

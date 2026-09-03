@@ -9,18 +9,20 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Mapping
+from typing import Any, cast
 
-from clients.stratus.stratus_agent.driver import driver
-from clients.stratus.stratus_agent.diagnosis_agent import DiagnosisAgent
-from clients.stratus.tools.submit_tool import manual_submit_tool
 from langchain_core.messages import HumanMessage
 
+from clients.stratus.stratus_agent.diagnosis_agent import DiagnosisAgent
+from clients.stratus.stratus_agent.driver import driver
+from clients.stratus.tools.submit_tool import manual_submit_tool
 
 _upstream_wait_for_stage_switch = driver.wait_for_stage_switch
 _upstream_safe_load = driver.yaml.safe_load
 
 
-def _panel_safe_load(payload):
+def _panel_safe_load(payload: Any) -> Any:
     """Keep the legacy control to one bounded mitigation attempt.
 
     The upstream ``validate`` retry pipeline starts a fresh LLM after the
@@ -29,16 +31,18 @@ def _panel_safe_load(payload):
     host timeout.  The control bridge is intentionally single-attempt; it
     does not alter the frozen upstream files or any R0 release.
     """
-    value = _upstream_safe_load(payload)
-    if isinstance(value, dict) and {"max_retry_attempts", "retry_mode"}.issubset(value):
-        value = dict(value)
-        value["max_step"] = min(int(value.get("max_step", 8)), 8)
-        value["max_retry_attempts"] = 1
-        value["retry_mode"] = "none"
-    return value
+    value: Any = _upstream_safe_load(payload)
+    if isinstance(value, dict):
+        value_object = cast(dict[str, Any], value)
+        if {"max_retry_attempts", "retry_mode"}.issubset(value_object):
+            value = dict(value_object)
+            value["max_step"] = min(int(value_object.get("max_step", 8)), 8)
+            value["max_retry_attempts"] = 1
+            value["retry_mode"] = "none"
+    return cast(Any, value)
 
 
-async def _bounded_force_submit(self, state):
+async def _bounded_force_submit(self: Any, state: Mapping[str, Any]) -> dict[str, Any]:
     """Submit a deterministic handoff when the bounded diagnosis budget ends.
 
     The upstream ``BaseAgent.force_submit`` makes another LLM request to ask
@@ -55,7 +59,7 @@ async def _bounded_force_submit(self, state):
     }
 
 
-def _bounded_generate_run_summary(last_state, summary_system_prompt):
+def _bounded_generate_run_summary(last_state: Any, summary_system_prompt: Any) -> str:
     """Keep the R1b handoff bounded without another unbounded LLM call.
 
     The upstream driver serializes the complete diagnosis transcript for a
@@ -69,10 +73,10 @@ def _bounded_generate_run_summary(last_state, summary_system_prompt):
     return "R1b bounded diagnosis handoff (last 8 messages):\n" + str(tail)[:12000]
 
 
-async def _wait_for_host_controlled_terminal(**kwargs):
+async def _wait_for_host_controlled_terminal(**kwargs: Any) -> Any:
     targets = set(kwargs["target_stages"])
     targets.add("awaiting_cleanup")
-    result = await _upstream_wait_for_stage_switch(
+    result = await cast(Any, _upstream_wait_for_stage_switch)(
         current_stage=kwargs["current_stage"],
         target_stages=targets,
         timeout=kwargs.get("timeout", 300),
@@ -90,14 +94,10 @@ async def _panel_control_main() -> None:
     the host can evaluate Oracle and cleanup normally.
     """
     await manual_submit_tool(ans="R0 panel diagnosis control")
-    stage = await _wait_for_host_controlled_terminal(
-        current_stage="diagnosis", target_stages={"mitigation", "done"}
-    )
+    stage = await _wait_for_host_controlled_terminal(current_stage="diagnosis", target_stages={"mitigation", "done"})
     if stage == "mitigation":
         await manual_submit_tool(ans="R0 panel mitigation control")
-        await _wait_for_host_controlled_terminal(
-            current_stage="mitigation", target_stages={"done"}
-        )
+        await _wait_for_host_controlled_terminal(current_stage="mitigation", target_stages={"done"})
 
 
 def main() -> None:

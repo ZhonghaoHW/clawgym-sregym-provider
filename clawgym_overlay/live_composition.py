@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sregym.conductor.conductor import Conductor, ConductorConfig
-
 from clawgym_overlay.composition import build_sregym_bindings
 from clawgym_overlay.live_checks import (
     SREGymLivePhaseProbe,
@@ -13,6 +11,7 @@ from clawgym_overlay.live_checks import (
     verify_filtered_kubernetes_access,
 )
 from clawgym_overlay.release import load_release_manifests
+from sregym.conductor.conductor import Conductor, ConductorConfig
 
 
 def build_live_sregym_bindings():

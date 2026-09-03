@@ -10,20 +10,20 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import hashlib
+import importlib
 import json
 import re
-import time
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, cast
 
 from clawgym.contracts import sha256_digest
-from clawgym_overlay.deployment_lock import load_deployment_lock
-from clawgym_overlay.environment_qualification import (
-    _TARGET as TARGET,
-)
-from clawgym_overlay.locked_runtime import LockedRuntime
 
+from clawgym_overlay.deployment_lock import load_deployment_lock
+from clawgym_overlay.environment_qualification import TARGET
+from clawgym_overlay.locked_runtime import LockedRuntime
 
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 _REV = re.compile(r"^[0-9a-f]{40}$")
@@ -44,7 +44,7 @@ def _read_json(path: Path) -> dict[str, Any]:
         raise QualificationRunnerError("qualification input is not valid JSON") from exc
     if not isinstance(value, dict):
         raise QualificationRunnerError("qualification input must be a JSON object")
-    return value
+    return cast(dict[str, Any], value)
 
 
 def _write_exclusive(path: Path, value: Mapping[str, Any]) -> str:
@@ -95,7 +95,7 @@ def _create_variant_policy(networking: Any, variant: str) -> None:
     if variant not in {"ingress_egress", "ingress_only"}:
         raise QualificationRunnerError("fault variant is not allowlisted")
     policy_types = ["Ingress", "Egress"] if variant == "ingress_egress" else ["Ingress"]
-    policy = {
+    policy: dict[str, Any] = {
         "apiVersion": "networking.k8s.io/v1",
         "kind": "NetworkPolicy",
         "metadata": {"name": _POLICY_NAME, "namespace": _NAMESPACE},
@@ -106,7 +106,7 @@ def _create_variant_policy(networking: Any, variant: str) -> None:
         },
     }
     if variant == "ingress_egress":
-        policy["spec"]["egress"] = []
+        cast(dict[str, Any], policy["spec"])["egress"] = []
     networking.create_namespaced_network_policy(_NAMESPACE, policy)
 
 
@@ -122,9 +122,15 @@ def _safe_probe(conductor: Any, *, policy_present: bool) -> dict[str, Any]:
     """Return typed health facts without serializing Kubernetes payloads."""
     problem = conductor.current_problem
     target_path = bool(problem.mitigation_oracle._run_recommendation_probe())
-    nodes_ready = all(
-        any(condition.type == "Ready" and condition.status == "True" for condition in (node.status.conditions or []))
-        for node in conductor.kubectl.list_nodes().items
+    node_items: list[Any] = list(conductor.kubectl.list_nodes().items)
+    # ``all([])`` is True, which would incorrectly admit an empty cluster.
+    # Readiness requires at least one observed node and every observed node to
+    # report the Kubernetes Ready=True condition.
+    nodes_ready = bool(node_items) and all(
+        any(
+            condition.type == "Ready" and condition.status == "True" for condition in list(node.status.conditions or [])
+        )
+        for node in node_items
     )
     return {
         "target_present": policy_present,
@@ -155,9 +161,10 @@ def _tool_probe(conductor: Any) -> Mapping[str, Any]:
     core.read_namespaced_service("recommendation", _NAMESPACE)
     # EndpointSlice is versioned in the discovery API; a 404 is a real failed
     # capability probe, not a reason to silently skip the check.
-    from kubernetes import client
-
-    client.DiscoveryV1Api().list_namespaced_endpoint_slice(_NAMESPACE, label_selector="kubernetes.io/service-name=recommendation")
+    client: Any = importlib.import_module("kubernetes.client")
+    client.DiscoveryV1Api().list_namespaced_endpoint_slice(
+        _NAMESPACE, label_selector="kubernetes.io/service-name=recommendation"
+    )
     core.list_namespaced_pod(_NAMESPACE, label_selector="io.kompose.service=recommendation")
     return {"allowed_probes": list(allowed), "denied_probes": list(denied), "passed": True}
 
@@ -250,10 +257,12 @@ def run_qualification_trial(
     if bundle.get("schema_id") != "clawgym.sregym_environment_component_bundle.v1":
         raise QualificationRunnerError("environment component bundle schema mismatch")
     _verify_digest(bundle, "component_bundle_digest")
-    component = bundle.get("component")
-    if not isinstance(component, Mapping) or component.get("family") != "fault":
+    component: Any = bundle.get("component")
+    if not isinstance(component, Mapping) or cast(Mapping[str, Any], component).get("family") != "fault":
         raise QualificationRunnerError("qualification requires a fault component")
-    variant = component.get("profile", {}).get("policy_scope")
+    component = cast(Mapping[str, Any], component)
+    profile = component.get("profile")
+    variant = cast(Mapping[str, Any], profile).get("policy_scope") if isinstance(profile, Mapping) else None
     if variant not in {"ingress_egress", "ingress_only"}:
         raise QualificationRunnerError("fault component variant is invalid")
     if bundle.get("component_digest") != component.get("candidate_component_digest"):
@@ -268,10 +277,8 @@ def run_qualification_trial(
 
     # Imports stay inside the explicit live command so local/offline users do
     # not need Kubernetes dependencies merely to import the Provider package.
-    from sregym.conductor.conductor import Conductor, ConductorConfig
-
-    from clawgym_overlay.live_checks import verify_filtered_kubernetes_access
     from clawgym_overlay.release import load_release_manifests
+    from sregym.conductor.conductor import Conductor, ConductorConfig
 
     manifests = load_release_manifests(Path(__file__).parent / "manifests")
     config = ConductorConfig(deploy_loki=True, enable_noise=False, defer_cleanup=True, task_stages=("mitigation",))
@@ -287,10 +294,9 @@ def run_qualification_trial(
     cleanup_result: Mapping[str, Any] = {}
     try:
         asyncio.run(conductor.prepare_problem())
-        from kubernetes import client
-
+        client: Any = importlib.import_module("kubernetes.client")
         networking = client.NetworkingV1Api()
-        core = conductor.kubectl.core_v1_api
+        core: Any = conductor.kubectl.core_v1_api
         core.create_namespace(
             client.V1Namespace(
                 metadata=client.V1ObjectMeta(
@@ -319,7 +325,9 @@ def run_qualification_trial(
         ]
         tool = _tool_document(trial["trial_id"], tool_raw)
         isolation = _isolation_document(trial["trial_id"], isolation_raw)
-        passed = all(item["oracle_observed"] == expected[item["state"]] for item in observations) and all(item["target_path_healthy"] == (item["state"] != "injected") for item in observations)
+        passed = all(item["oracle_observed"] == expected[item["state"]] for item in observations) and all(
+            item["target_path_healthy"] == (item["state"] != "injected") for item in observations
+        )
         status = "completed" if passed and tool["passed"] else "semantic_disqualified"
         failure_class = None if status == "completed" else "semantic_disqualified"
     except Exception:
@@ -328,17 +336,16 @@ def run_qualification_trial(
         raise
     finally:
         if networking is not None:
-            try:
+            with contextlib.suppress(Exception):
                 _delete_policy(networking)
-            except Exception:
-                pass
         try:
             # Conductor.cleanup_problem is intentionally synchronous: it owns
             # the host-side recovery/cleanup boundary and must not be wrapped
             # in asyncio.run (which would treat its returned mapping as a
             # coroutine and silently skip cleanup).
-            cleanup_result = conductor.cleanup_problem()
-            cleanup_ok = isinstance(cleanup_result, Mapping) and cleanup_result.get("status") == "cleaned"
+            cleanup_fn = cast(Callable[..., Mapping[str, Any]], conductor.cleanup_problem)  # pyright: ignore[reportUnknownMemberType] -- upstream Conductor has no typed stub
+            cleanup_result = cleanup_fn()
+            cleanup_ok = cleanup_result.get("status") == "cleaned"
         except Exception:
             cleanup_ok = False
         try:
@@ -347,7 +354,7 @@ def run_qualification_trial(
         except Exception:
             pass
 
-    observation_paths = []
+    observation_paths: list[str] = []
     for item in observations:
         path = output / f"observation-{item['state']}.json"
         _write_exclusive(path, item)
@@ -363,10 +370,13 @@ def run_qualification_trial(
             "tool_usable": tool["passed"],
             "isolated": isolation["no_unrelated_changes"],
             "cleanup": cleanup_ok,
-            "cleanup_status": cleanup_result.get("status") if isinstance(cleanup_result, Mapping) else "error",
+            "cleanup_status": cleanup_result.get("status", "error"),
             "status": status,
             "failure_class": failure_class,
-            "receipts": [{"phase": item["state"], "observation": name} for item, name in zip(observations, observation_paths, strict=True)],
+            "receipts": [
+                {"phase": item["state"], "observation": name}
+                for item, name in zip(observations, observation_paths, strict=True)
+            ],
         }
     )
     if not cleanup_ok:

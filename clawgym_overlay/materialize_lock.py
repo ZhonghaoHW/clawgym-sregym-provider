@@ -1,4 +1,4 @@
-"""Materialize an immutable WP4 deployment cache and preload locked images."""
+"""Materialize the immutable deployment lock through typed host seams."""
 
 from __future__ import annotations
 
@@ -6,17 +6,16 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import subprocess
-import tempfile
 import time
 import urllib.request
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
 
 from clawgym_overlay.deployment_lock import load_deployment_lock, validate_deployment_lock
 from clawgym_overlay.locked_runtime import LockedRuntime, LockedRuntimeError
+from clawgym_overlay.runtime_image_backend import SubprocessRuntimeImageBackend, preload_images_with_backend
 
 
 def resolve_node_platform_digest(
@@ -27,11 +26,10 @@ def resolve_node_platform_digest(
     *,
     runner: Callable[..., Any] = subprocess.run,
 ) -> str:
+    """Resolve exactly one locked platform descriptor from a Kind node."""
+
     listed = runner(
-        (
-            "docker", "exec", "--privileged", node,
-            "ctr", "--namespace=k8s.io", "images", "list", f"name=={source}",
-        ),
+        ("docker", "exec", "--privileged", node, "ctr", "--namespace=k8s.io", "images", "list", f"name=={source}"),
         check=True,
         capture_output=True,
         text=True,
@@ -43,31 +41,41 @@ def resolve_node_platform_digest(
     if descriptor_digest != integrity:
         return descriptor_digest
     content = runner(
-        (
-            "docker", "exec", "--privileged", node,
-            "ctr", "--namespace=k8s.io", "content", "get", integrity,
-        ),
+        ("docker", "exec", "--privileged", node, "ctr", "--namespace=k8s.io", "content", "get", integrity),
         check=True,
         capture_output=True,
     )
     try:
-        descriptor = json.loads(content.stdout)
+        descriptor: Any = json.loads(content.stdout)
     except (TypeError, json.JSONDecodeError) as exc:
         raise LockedRuntimeError("locked runtime image descriptor is invalid") from exc
+    if not isinstance(descriptor, Mapping):
+        raise LockedRuntimeError("locked runtime image descriptor is invalid")
+    descriptor = cast(Mapping[str, Any], descriptor)
     manifests = descriptor.get("manifests")
     if manifests is None:
         return descriptor_digest
+    if not isinstance(manifests, list):
+        raise LockedRuntimeError("locked runtime image descriptor is invalid")
     os_name, architecture = platform.split("/", 1)
-    matches = [
-        item
-        for item in manifests
-        if item.get("platform", {}).get("os") == os_name
-        and item.get("platform", {}).get("architecture") == architecture
-        and not item.get("platform", {}).get("variant")
-    ]
-    if len(matches) != 1:
+    matches: list[Mapping[str, Any]] = []
+    for raw_item in cast(list[Any], manifests):
+        if not isinstance(raw_item, Mapping):
+            raise LockedRuntimeError("locked runtime image descriptor is invalid")
+        item = cast(Mapping[str, Any], raw_item)
+        item_platform = item.get("platform")
+        if not isinstance(item_platform, Mapping):
+            raise LockedRuntimeError("locked runtime image descriptor is invalid")
+        item_platform = cast(Mapping[str, Any], item_platform)
+        if (
+            item_platform.get("os") == os_name
+            and item_platform.get("architecture") == architecture
+            and not item_platform.get("variant")
+        ):
+            matches.append(item)
+    if len(matches) != 1 or not isinstance(matches[0].get("digest"), str):
         raise LockedRuntimeError("locked runtime platform descriptor is ambiguous")
-    return matches[0]["digest"]
+    return cast(str, matches[0]["digest"])
 
 
 def materialize_assets(
@@ -76,7 +84,7 @@ def materialize_assets(
     *,
     opener: Callable[[str], BinaryIO] = urllib.request.urlopen,
 ) -> dict[str, Any]:
-    """Populate a caller-created empty directory from checksum-locked HTTPS assets."""
+    """Populate a caller-created empty directory from checksum-locked assets."""
 
     validate_deployment_lock(document)
     root = Path(cache_root)
@@ -100,8 +108,7 @@ def materialize_assets(
                     output.write(chunk)
                 output.flush()
                 os.fsync(output.fileno())
-            actual = f"sha256:{digest.hexdigest()}"
-            if actual != artifact["integrity"]:
+            if f"sha256:{digest.hexdigest()}" != artifact["integrity"]:
                 raise LockedRuntimeError(f"downloaded deployment asset digest mismatch: {artifact['name']}")
             os.chmod(temporary, 0o600)
             os.replace(temporary, destination)
@@ -124,239 +131,26 @@ def preload_runtime_images(
     host_seeder: Callable[[Mapping[str, Any], str, tuple[str, ...]], bool] | None = None,
     platform_digest_resolver: Callable[[str, str, str, str], str] | None = None,
 ) -> dict[str, Any]:
-    """Pull each locked runtime digest directly into every Kind node."""
+    """Validate and preload locked images using an explicit backend."""
 
     validate_deployment_lock(document)
-    if not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", cluster_name):
-        raise LockedRuntimeError("Kind cluster name is invalid")
-    identities: list[str] = []
     platform = document["platform"].replace("-", "/", 1)
-    if nodes is None:
-        completed = runner(
-            ("kind", "get", "nodes", "--name", cluster_name),
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        nodes = tuple(line for line in completed.stdout.splitlines() if line)
-    if not nodes or len(nodes) != len(set(nodes)):
-        raise LockedRuntimeError("Kind node inventory is empty or duplicated")
-    control_nodes = tuple(node for node in nodes if node.endswith("control-plane"))
-    if len(control_nodes) != 1:
-        raise LockedRuntimeError("Kind node inventory must contain one control plane")
-    control_node = control_nodes[0]
-    worker_nodes = tuple(node for node in nodes if node != control_node)
-    if platform_digest_resolver is None:
-        platform_digest_resolver = lambda node, source, integrity, selected_platform: (
-            resolve_node_platform_digest(
-                node,
-                source,
-                integrity,
-                selected_platform,
-                runner=runner,
-            )
-        )
-    if ready_checker is None:
-        def ready_checker(node: str, source: str) -> bool:
-            completed = runner(
-                (
-                    "docker", "exec", "--privileged", node,
-                    "ctr", "--namespace=k8s.io", "images", "export",
-                    "--platform", platform, "-", source,
-                ),
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            return completed.returncode == 0
-
-    def canonical_target(reference: str) -> str:
-        head = reference.split("/", maxsplit=1)[0]
-        if "/" not in reference:
-            result = f"docker.io/library/{reference}"
-        elif "." not in head and ":" not in head and head != "localhost":
-            result = f"docker.io/{reference}"
-        else:
-            result = reference
-        tail = result.rsplit("/", maxsplit=1)[-1]
-        if ":" not in tail and "@" not in tail:
-            result = f"{result}:latest"
-        return result
-
-    if host_seeder is None:
-        def host_seeder(
-            artifact: Mapping[str, Any],
-            source: str,
-            node_names: tuple[str, ...],
-        ) -> bool:
-            target = artifact["target"]
-            descriptor = subprocess.run(
-                ("docker", "image", "inspect", "--format={{.Descriptor.digest}}", target),
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            if descriptor.returncode != 0 or descriptor.stdout.strip() != artifact["integrity"]:
-                return False
-            archive_descriptor, archive_name = tempfile.mkstemp(
-                prefix="clawgym-host-image-", suffix=".tar"
-            )
-            os.close(archive_descriptor)
-            archive = Path(archive_name)
-            try:
-                saved = subprocess.run(
-                    (
-                        "docker", "image", "save", "--platform", platform,
-                        "--output", str(archive), target,
-                    ),
-                    check=False,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                if saved.returncode != 0:
-                    return False
-                loaded = subprocess.run(
-                    (
-                        "kind", "load", "image-archive", "--name", cluster_name,
-                        str(archive),
-                    ),
-                    check=False,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                if loaded.returncode != 0:
-                    return False
-                normalized_target = canonical_target(target)
-                for node in node_names:
-                    tagged = subprocess.run(
-                        (
-                            "docker", "exec", "--privileged", node,
-                            "ctr", "--namespace=k8s.io", "images", "tag",
-                            "--force", normalized_target, source,
-                        ),
-                        check=False,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                    if tagged.returncode != 0:
-                        return False
-                return True
-            finally:
-                archive.unlink(missing_ok=True)
-
-    for artifact in sorted(document["artifacts"], key=lambda item: item["name"]):
-        if not artifact["name"].startswith("runtime-image."):
-            continue
-        source = artifact["source"].removeprefix("oci://")
-        target = canonical_target(artifact["target"])
-        if not ready_checker(control_node, source):
-            host_seeder(artifact, source, nodes)
-        descriptor, archive_name = tempfile.mkstemp(prefix="clawgym-node-image-", suffix=".tar")
-        os.close(descriptor)
-        archive = Path(archive_name)
-
-        def execute(
-            stage: str,
-            command: tuple[str, ...],
-            *,
-            attempts: int = 1,
-            **kwargs: Any,
-        ) -> None:
-            for attempt in range(attempts):
-                try:
-                    runner(
-                        command,
-                        check=True,
-                        stderr=subprocess.DEVNULL,
-                        **kwargs,
-                    )
-                    return
-                except subprocess.CalledProcessError as exc:
-                    if attempt + 1 == attempts:
-                        raise LockedRuntimeError(
-                            f"failed to {stage} locked runtime image: {artifact['name']}"
-                        ) from exc
-                    sleeper(min(30 * (2**attempt), 240))
-
-        try:
-            if not ready_checker(control_node, source):
-                runner(
-                    (
-                        "docker", "exec", "--privileged", control_node,
-                        "ctr", "--namespace=k8s.io", "images", "remove", source,
-                    ),
-                    check=False,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                execute(
-                    "pull",
-                    (
-                        "docker", "exec", "--privileged", control_node,
-                        "ctr", "--namespace=k8s.io", "images", "pull",
-                        "--local", "--skip-metadata", "--platform", platform, source,
-                    ),
-                    attempts=5,
-                    stdout=subprocess.DEVNULL,
-                )
-            actual_platform_digest = platform_digest_resolver(
-                control_node, source, artifact["integrity"], platform
-            )
-            if actual_platform_digest != artifact["platform_integrity"]:
-                raise LockedRuntimeError(
-                    f"locked runtime platform digest mismatch: {artifact['name']}"
-                )
-            execute(
-                "tag",
-                (
-                    "docker", "exec", "--privileged", control_node,
-                    "ctr", "--namespace=k8s.io", "images", "tag",
-                    "--force", source, target,
-                ),
-                stdout=subprocess.DEVNULL,
-            )
-            with archive.open("wb") as output:
-                execute(
-                    "export",
-                    (
-                        "docker", "exec", "--privileged", control_node,
-                        "ctr", "--namespace=k8s.io", "images", "export",
-                        "--platform", platform, "-", source,
-                    ),
-                    stdout=output,
-                )
-            for node in worker_nodes:
-                with archive.open("rb") as source_archive:
-                    execute(
-                        "import",
-                        (
-                            "docker", "exec", "--privileged", "-i", node,
-                            "ctr", "--namespace=k8s.io", "images", "import",
-                            "--platform", platform, "--digests",
-                            "--snapshotter=overlayfs", "-",
-                        ),
-                        stdin=source_archive,
-                        stdout=subprocess.DEVNULL,
-                    )
-                execute(
-                    "tag",
-                    (
-                        "docker", "exec", "--privileged", node,
-                        "ctr", "--namespace=k8s.io", "images", "tag",
-                        "--force", source, target,
-                    ),
-                    stdout=subprocess.DEVNULL,
-                )
-        finally:
-            archive.unlink(missing_ok=True)
-        identities.append(
-            f"{artifact['target']}:{artifact['integrity']}:{artifact['platform_integrity']}"
-        )
-    return {
-        "schema_id": "clawgym.sregym_preloaded_images.v1",
-        "image_count": len(identities),
-        "image_set_digest": hashlib.sha256("\n".join(identities).encode()).hexdigest(),
-    }
+    backend = SubprocessRuntimeImageBackend(
+        cluster_name=cluster_name,
+        platform=platform,
+        runner=runner,
+        ready_checker=ready_checker,
+        host_seeder=host_seeder,
+        platform_digest_resolver=platform_digest_resolver,
+    )
+    return preload_images_with_backend(
+        document,
+        cluster_name,
+        backend=backend,
+        nodes=nodes,
+        platform=platform,
+        sleeper=sleeper,
+    )
 
 
 def main() -> None:
@@ -369,10 +163,11 @@ def main() -> None:
     images.add_argument("--cluster-name", required=True)
     arguments = parser.parse_args()
     document = load_deployment_lock(arguments.lock)
-    if arguments.command == "assets":
-        result = materialize_assets(document, arguments.cache_root)
-    else:
-        result = preload_runtime_images(document, arguments.cluster_name)
+    result = (
+        materialize_assets(document, arguments.cache_root)
+        if arguments.command == "assets"
+        else preload_runtime_images(document, arguments.cluster_name)
+    )
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
 
 

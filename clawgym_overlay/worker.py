@@ -8,71 +8,83 @@ import json
 import os
 import stat
 import threading
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any, cast
 
 from clawgym.artifacts import RetainedArtifactSink
 from clawgym.contracts import RunManifest, canonical_json_bytes, sha256_digest
 from clawgym.providers import ProviderBinding, ProviderDefinition, ProviderRegistry
 from clawgym.worker import execute_worker, verify_source_checkout
-from clawgym.attempt_authority import claim_attempt
+
+from clawgym_overlay.compatibility_registry import load_legacy_reference_profile, load_r0_bridge, resolve_r0_profile
 from clawgym_overlay.composition import register_sregym_providers
+from clawgym_overlay.deployment_lock import deployment_lock_digest, load_deployment_lock
 from clawgym_overlay.live_checks import (
     SREGymCausalTelemetryRecorder,
     SREGymLivePhaseProbe,
     build_kubernetes_telemetry_snapshotter,
+    capture_oracle_attribution,
     delete_validation_network_policy,
     verify_filtered_kubernetes_access,
-    capture_oracle_attribution,
 )
-from clawgym_overlay.deployment_lock import deployment_lock_digest, load_deployment_lock
 from clawgym_overlay.locked_runtime import LockedRuntime
+from clawgym_overlay.materialized_profile import load_materialized_reference_profile
 from clawgym_overlay.providers import SREGymEnvironmentValidationAdapter, SREGymReferenceAgentAdapter
-from clawgym_overlay.reference_profiles import load_reference_agent_profile, load_materialized_reference_profile
-from clawgym_overlay.r0_panel_bridge import load_r0_panel_bridge, resolve_r0_panel_profile
 from clawgym_overlay.reference_runner import SafeStratusRunner
 from clawgym_overlay.release import load_release_manifests
 from clawgym_overlay.validation_profiles import load_validation_profiles
+from clawgym_overlay.worker_admission import (
+    ExecutionDocuments,
+    MaterializedExecutionAdmission,
+    validate_campaign_execution,
+    validate_worker_admission,
+)
+from clawgym_overlay.worker_profile import ReferenceAdapterDeps, build_reference_adapter
+from clawgym_overlay.worker_runtime import WorkerHostSession, WorkerRuntimeDeps, execute_admitted_trial
 
 
-def _read_json(path: str | Path):
+def _read_json(path: str | Path) -> dict[str, Any]:
     with Path(path).open(encoding="utf-8") as handle:
-        document = json.load(handle)
+        document: Any = json.load(handle)
     if not isinstance(document, dict):
         raise ValueError(f"{path} must contain a JSON object")
-    return document
+    return cast(dict[str, Any], document)
 
 
-def _verify_campaign_authorization(document: dict, *, candidate_digest: str, trial_digest: str, approval_digest: str, case_id: str, seed: int, partition: str, purpose: str, campaign_digest: str | None = None, generation: int | None = None) -> None:
-    """Use the ClawGym bridge when available, with a narrow compatibility
-    fallback for locked historical environments that predate WP7.4."""
-    try:
-        from clawgym.execution_bridge import verify_campaign_trial_authorization
-    except ImportError:
-        from clawgym.contracts import ContractValidationError, sha256_digest
-        expected = dict(document)
-        actual = expected.pop("authorization_digest", None)
-        if actual != sha256_digest(expected):
-            raise ContractValidationError("campaign authorization digest mismatch")
-        if document.get("schema_id") != "agent_evolution.campaign_trial_authorization.v1" or document.get("execution_scope") != "reference_family_only":
-            raise ContractValidationError("campaign authorization scope is invalid")
-        if document.get("purpose") != purpose or document.get("partition") != partition or document.get("case_id") != case_id or document.get("seed") != seed:
-            raise ContractValidationError("campaign authorization trial identity mismatch")
-        if document.get("candidate_digest") != candidate_digest or document.get("trial_digest") != trial_digest or document.get("approval_digest") != approval_digest:
-            raise ContractValidationError("campaign authorization digest references mismatch")
-        if campaign_digest is not None and document.get("campaign_digest") != campaign_digest:
-            raise ContractValidationError("campaign authorization campaign mismatch")
-        if generation is not None and document.get("generation") != generation:
-            raise ContractValidationError("campaign authorization generation mismatch")
-        return
-    verify_campaign_trial_authorization(
-        authorization_document=document, candidate_digest=candidate_digest,
-        trial_digest=trial_digest, approval_digest=approval_digest,
-        case_id=case_id, seed=seed, partition=partition, purpose=purpose,
-        campaign_digest=campaign_digest, generation=generation,
+def load_execution_documents(args: argparse.Namespace) -> ExecutionDocuments:
+    """Load only explicitly supplied documents; no workspace discovery."""
+
+    def optional(name: str) -> Mapping[str, Any] | None:
+        value = getattr(args, name, None)
+        return _read_json(value) if value else None
+
+    run_document = _read_json(args.run_manifest)
+    run_id = run_document.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        raise ValueError("run manifest must contain a run_id")
+    return ExecutionDocuments(
+        run=run_document,
+        agent=_read_json(args.agent_release),
+        environment=_read_json(args.environment_release),
+        approval=optional("approval"),
+        matrix=optional("matrix"),
+        trial=optional("trial"),
+        attempt_request=optional("attempt_request"),
+        attempt_ledger=optional("attempt_ledger"),
+        environment_lease=optional("environment_lease"),
+        validation_request=optional("validation_request"),
+        candidate=optional("candidate"),
+        materialization_receipt=optional("materialization_receipt"),
+        parent_agent_release=optional("parent_agent_release"),
+        campaign_authorization=optional("campaign_authorization"),
+        campaign=optional("campaign"),
+        campaign_plan=optional("campaign_plan"),
+        readiness_control_set=optional("readiness_control_set"),
     )
 
 
-def _binding(implementation) -> ProviderBinding:
+def _binding(implementation: Any) -> ProviderBinding:
     return ProviderBinding(
         ProviderDefinition(
             implementation.provider_id,
@@ -83,7 +95,7 @@ def _binding(implementation) -> ProviderBinding:
     )
 
 
-def verify_formal_kind_topology(provider_root: Path, execution_profile: dict) -> Path:
+def verify_formal_kind_topology(provider_root: Path, execution_profile: Mapping[str, Any]) -> Path:
     topology = provider_root / "clawgym_overlay" / "kind.wp4.formal.yaml"
     actual = hashlib.sha256(topology.read_bytes()).hexdigest()
     if actual != execution_profile.get("kind_topology_sha256"):
@@ -92,8 +104,10 @@ def verify_formal_kind_topology(provider_root: Path, execution_profile: dict) ->
 
 
 def verify_release_revisions(
-    agent_document: dict, environment_document: dict, provider_revision: str,
-    compatibility_bridge: dict | None = None,
+    agent_document: Mapping[str, Any],
+    environment_document: Mapping[str, Any],
+    provider_revision: str,
+    compatibility_bridge: Mapping[str, Any] | None = None,
 ) -> None:
     environment_revision = environment_document.get("overlay_revision")
     if not isinstance(environment_revision, str) or len(environment_revision) != 40:
@@ -144,99 +158,92 @@ def execute(args: argparse.Namespace) -> None:
     verify_source_checkout(provider_root, args.provider_revision)
     verify_source_checkout(clawgym_root, args.clawgym_revision)
 
-    run_document = _read_json(args.run_manifest)
-    run_id = run_document.get("run_id")
-    if not isinstance(run_id, str) or not run_id:
-        raise ValueError("run manifest must contain a run_id")
+    documents = load_execution_documents(args)
+    run_document = documents.run
+    admission = validate_worker_admission(
+        documents,
+        materialization_bundle=getattr(args, "materialization_bundle", None),
+        attempt_claim_root=getattr(args, "attempt_claim_root", None),
+        environment_lease_root=getattr(args, "environment_lease_root", None),
+    )
+    run_id = admission.identity.run_id
     runtime_workdir = args.runtime_workdir or str(Path(args.evidence_root).resolve().parent / f".runtime-{run_id}")
     prepare_runtime_workdir(runtime_workdir)
-    agent_document = _read_json(args.agent_release)
-    environment_document = _read_json(args.environment_release)
-    approval_document = _read_json(args.approval) if getattr(args, "approval", None) else None
-    matrix_document = _read_json(args.matrix) if getattr(args, "matrix", None) else None
-    trial_document = _read_json(args.trial) if getattr(args, "trial", None) else None
-    attempt_request_document = _read_json(args.attempt_request) if getattr(args, "attempt_request", None) else None
-    attempt_ledger_document = _read_json(args.attempt_ledger) if getattr(args, "attempt_ledger", None) else None
-    request_document = _read_json(args.validation_request) if getattr(args, "validation_request", None) else None
-    candidate_document = _read_json(args.candidate) if getattr(args, "candidate", None) else None
-    receipt_document = _read_json(args.materialization_receipt) if getattr(args, "materialization_receipt", None) else None
-    parent_document = _read_json(args.parent_agent_release) if getattr(args, "parent_agent_release", None) else None
-    readiness_attestation_document = _read_json(args.readiness_attestation) if getattr(args, "readiness_attestation", None) else None
+    agent_document = documents.agent
+    environment_document = documents.environment
+    approval_document = documents.approval
+    matrix_document = documents.matrix
+    trial_document = documents.trial
+    attempt_request_document = documents.attempt_request
+    attempt_ledger_document = documents.attempt_ledger
+    environment_lease_document = documents.environment_lease
+    request_document = documents.validation_request
+    candidate_document = documents.candidate
+    receipt_document = documents.materialization_receipt
+    parent_document = documents.parent_agent_release
+    readiness_attestation_document = (
+        _read_json(args.readiness_attestation) if getattr(args, "readiness_attestation", None) else None
+    )
     e0_agent_release_document = _read_json(args.e0_agent_release) if getattr(args, "e0_agent_release", None) else None
-    campaign_authorization_document = _read_json(args.campaign_authorization) if getattr(args, "campaign_authorization", None) else None
-    campaign_document = _read_json(args.campaign) if getattr(args, "campaign", None) else None
-    campaign_plan_document = _read_json(args.campaign_plan) if getattr(args, "campaign_plan", None) else None
-    readiness_control_set_document = _read_json(args.readiness_control_set) if getattr(args, "readiness_control_set", None) else None
-    compatibility_bridge_document = _read_json(args.r0_compatibility_bridge) if getattr(args, "r0_compatibility_bridge", None) else None
+    compatibility_bridge_document = (
+        _read_json(args.r0_compatibility_bridge) if getattr(args, "r0_compatibility_bridge", None) else None
+    )
     if compatibility_bridge_document is not None:
         # Validate the on-disk bridge again at the point of use.  The argument
         # is a path, never a caller-supplied digest or profile selector.
-        compatibility_bridge_document = load_r0_panel_bridge(args.r0_compatibility_bridge)
-    campaign_admission = None
-    if any(value is not None for value in (campaign_document, campaign_plan_document, readiness_control_set_document)):
-        if any(value is None for value in (campaign_document, campaign_plan_document, readiness_control_set_document)):
-            raise ValueError("campaign execution requires campaign, plan and readiness-control-set documents")
-        from clawgym.campaign_admission import verify_reference_campaign_admission
-        campaign_admission = verify_reference_campaign_admission(
-            campaign_document=campaign_document,
-            plan_document=campaign_plan_document,
-            readiness_control_set=readiness_control_set_document,
-            expected_clawgym_revision=args.clawgym_revision,
-            expected_provider_revision=args.provider_revision,
-            expected_environment_release_digest=environment_document.get("environment_release_digest"),
-            expected_deployment_lock_digest=campaign_document.get("deployment_lock_digest"),
-        )
-    if campaign_authorization_document is not None:
-        required_campaign = (candidate_document, trial_document, approval_document)
-        if any(document is None for document in required_campaign):
-            raise ValueError("campaign execution requires candidate, trial and approval documents")
-        _verify_campaign_authorization(
-            campaign_authorization_document,
-            candidate_digest=candidate_document["candidate_digest"],
-            trial_digest=trial_document["trial_digest"],
-            approval_digest=approval_document["approval_record_digest"],
-            case_id=run_document.get("case_id", trial_document.get("case_id")),
-            seed=run_document.get("seed", trial_document.get("seed")),
-            partition=trial_document.get("partition"),
-            purpose=campaign_authorization_document.get("purpose"),
-            campaign_digest=campaign_authorization_document.get("campaign_digest"),
-            generation=campaign_authorization_document.get("generation"),
-        )
-    verify_release_revisions(agent_document, environment_document, args.provider_revision, compatibility_bridge_document)
-
-    from sregym.conductor.conductor import Conductor, ConductorConfig
-    from sregym.conductor.conductor_api import request_shutdown, run_api
-
-    deployment_lock = load_deployment_lock(
-        provider_root / "clawgym_overlay" / "deployment.wp4.lock.json"
+        compatibility_bridge_document = load_r0_bridge(args.r0_compatibility_bridge)
+    campaign_preflight = validate_campaign_execution(
+        documents,
+        environment_release_digest=environment_document.get("environment_release_digest"),
+        clawgym_revision=args.clawgym_revision,
+        provider_revision=args.provider_revision,
     )
-    if campaign_admission is not None and campaign_document.get("deployment_lock_digest") != deployment_lock_digest(deployment_lock):
+    campaign_document = campaign_preflight.campaign
+    campaign_admission = campaign_preflight.admission
+    verify_release_revisions(
+        agent_document, environment_document, args.provider_revision, compatibility_bridge_document
+    )
+
+    from sregym.conductor import conductor_api
+    from sregym.conductor.conductor import Conductor, ConductorConfig
+
+    run_api_callable: Callable[[Any], None] = cast(Callable[[Any], None], conductor_api.run_api)  # pyright: ignore[reportUnknownMemberType] -- upstream SREGym exposes no typed API stub
+    request_shutdown_callable: Callable[[], Any] = cast(Callable[[], Any], conductor_api.request_shutdown)
+
+    deployment_lock = load_deployment_lock(provider_root / "clawgym_overlay" / "deployment.wp4.lock.json")
+    if (
+        campaign_admission is not None
+        and campaign_document is not None
+        and campaign_document.get("deployment_lock_digest") != deployment_lock_digest(deployment_lock)
+    ):
         raise ValueError("campaign deployment lock does not match provider lock")
-    execution_profile = load_release_manifests(
-        provider_root / "clawgym_overlay" / "manifests"
-    )["execution"]
+    execution_profile = load_release_manifests(provider_root / "clawgym_overlay" / "manifests")["execution"]
     if execution_profile["deployment_lock_digest"] != deployment_lock_digest(deployment_lock):
         raise ValueError("execution profile does not identify the deployment lock")
     verify_formal_kind_topology(provider_root, execution_profile)
     locked_runtime = LockedRuntime(deployment_lock, args.deployment_cache)
     conductor_config = ConductorConfig(
-            deploy_loki=True,
-            enable_noise=False,
-            defer_cleanup=True,
-            task_stages=("mitigation",),
+        deploy_loki=True,
+        enable_noise=False,
+        defer_cleanup=True,
+        task_stages=("mitigation",),
     )
     locked_runtime.configure_conductor(conductor_config)
-    conductor = Conductor(conductor_config)
+    conductor: Any = Conductor(conductor_config)
     locked_runtime.configure_services(conductor)
     os.environ["API_BIND_HOST"] = "0.0.0.0"
     os.environ["API_PORT"] = "8000"
     api_thread = threading.Thread(
-        target=run_api,
+        target=run_api_callable,
         args=(conductor,),
         name="clawgym-wp5-conductor-api",
         daemon=True,
     )
-    api_thread.start()
+    session = WorkerHostSession(
+        start_api=api_thread.start,
+        request_shutdown=request_shutdown_callable,
+        join_api=lambda: api_thread.join(timeout=15),
+    )
     manifest_root = provider_root / "clawgym_overlay" / "manifests"
     manifests = load_release_manifests(manifest_root)
     adapter_profile, sink_profile = load_validation_profiles(manifest_root)
@@ -251,44 +258,29 @@ def execute(args: argparse.Namespace) -> None:
             conductor,
             telemetry_capture=telemetry.capture,
             runtime_image_inventory=lambda: locked_runtime.cluster_image_inventory(conductor),
-            baseline_window_seconds=manifests["fault"]["steady_state"][
-                "baseline_window_seconds"
-            ],
-            max_experiment_duration_seconds=manifests["fault"][
-                "max_experiment_duration_seconds"
-            ],
+            baseline_window_seconds=manifests["fault"]["steady_state"]["baseline_window_seconds"],
+            max_experiment_duration_seconds=manifests["fault"]["max_experiment_duration_seconds"],
         ),
         access_verifier=verify_filtered_kubernetes_access,
         attribution_capture=lambda phase: capture_oracle_attribution(conductor, phase),
     )
     if run_document.get("lane") == "agent_validation":
-        if getattr(args, "materialization_bundle", None):
-            profile = load_materialized_reference_profile(args.materialization_bundle, profile_digest=agent_document.get("invocation_profile_digest"))
-        else:
-            profile = load_reference_agent_profile(manifest_root, profile_digest=agent_document.get("invocation_profile_digest"))
-        if compatibility_bridge_document is not None:
-            profile = resolve_r0_panel_profile(
-                compatibility_bridge_document,
-                agent_release=agent_document,
-                manifest_root=manifest_root,
-            )
-        if agent_document.get("adapter_id") != profile["adapter_id"]:
-            raise ValueError("AgentRelease does not identify the frozen reference adapter")
-        expected_profile_digest = (
-            compatibility_bridge_document["historical_profile_digest"]
-            if compatibility_bridge_document is not None
-            else profile.get("profile_digest") or sha256_digest(profile)
-        )
-        if agent_document.get("invocation_profile_digest") != expected_profile_digest:
-            raise ValueError("AgentRelease does not identify the frozen invocation profile")
-        if not args.agent_secret_file:
-            raise ValueError("WP5 reference worker requires --agent-secret-file")
-        adapter = SREGymReferenceAgentAdapter(
-            sha256_digest(profile),
-            SafeStratusRunner(
-                profile=profile,
-                secret_file=args.agent_secret_file,
-                materialization_bundle=args.materialization_bundle,
+        adapter = build_reference_adapter(
+            agent_release=agent_document,
+            manifest_root=manifest_root,
+            materialization_bundle=args.materialization_bundle,
+            compatibility_bridge=compatibility_bridge_document,
+            secret_file=args.agent_secret_file,
+            deps=ReferenceAdapterDeps(
+                load_materialized=lambda bundle: load_materialized_reference_profile(
+                    bundle, profile_digest=agent_document.get("invocation_profile_digest")
+                ),
+                load_legacy=lambda root, digest: load_legacy_reference_profile(root, profile_digest=digest),
+                resolve_r0=lambda bridge, release, root: resolve_r0_profile(
+                    bridge, agent_release=release, manifest_root=root
+                ),
+                runner_factory=SafeStratusRunner,
+                adapter_factory=SREGymReferenceAgentAdapter,
             ),
         )
     else:
@@ -297,13 +289,10 @@ def execute(args: argparse.Namespace) -> None:
             delete_validation_network_policy,
             namespace=adapter_profile["namespace"],
             policy_name=adapter_profile["resource_name"],
-            steady_state_probe=lambda: bool(
-                conductor.current_problem.mitigation_oracle._run_recommendation_probe()
-            ),
+            steady_state_probe=lambda: bool(conductor.current_problem.mitigation_oracle._run_recommendation_probe()),
             telemetry_capture=telemetry.capture,
         )
     registry.register_binding(_binding(adapter))
-    run_id = run_document.get("run_id")
     sink = RetainedArtifactSink(
         args.evidence_root,
         run_id,
@@ -312,8 +301,6 @@ def execute(args: argparse.Namespace) -> None:
     )
     registry.register_binding(_binding(sink))
     run = RunManifest.from_dict(run_document, registry=registry)
-    if run.lane not in {"environment_validation", "agent_validation"}:
-        raise ValueError("live worker requires a reviewed validation lane")
     sink.write_bytes(
         "host/source-checkouts.json",
         canonical_json_bytes(
@@ -348,60 +335,109 @@ def execute(args: argparse.Namespace) -> None:
     if campaign_admission is not None:
         sink.write_bytes(
             "host/campaign-admission.json",
-            canonical_json_bytes({"schema_id": "clawgym.campaign_admission_receipt.v1", "campaign_digest": campaign_admission[0], "plan_digest": campaign_admission[1], "provider_revision": args.provider_revision, "clawgym_revision": args.clawgym_revision}),
+            canonical_json_bytes(
+                {
+                    "schema_id": "clawgym.campaign_admission_receipt.v1",
+                    "campaign_digest": campaign_admission[0],
+                    "plan_digest": campaign_admission[1],
+                    "provider_revision": args.provider_revision,
+                    "clawgym_revision": args.clawgym_revision,
+                }
+            ),
             media_type="application/json",
         )
-    try:
-        if run_document.get("lane") == "agent_validation" and args.materialization_bundle:
-            from clawgym.execution_bridge import execute_approved_trial
-            required = (request_document, candidate_document, receipt_document, parent_document, approval_document, matrix_document, trial_document)
-            if any(document is None for document in required):
-                raise ValueError("materialized candidate execution requires the complete approved artifact chain")
-            if attempt_request_document is None or attempt_ledger_document is None or not args.attempt_claim_root:
-                raise ValueError("materialized candidate execution requires attempt request, ledger and claim root")
-            claim = claim_attempt(
-                root=args.attempt_claim_root,
-                approval_record_digest=approval_document["approval_record_digest"],
-                trial_digest=trial_document["trial_digest"],
-                attempt_number=attempt_request_document["attempt_number"],
-                attempt_id=attempt_request_document["execution_attempt_id"],
-                runtime_reference=args.provider_revision,
+    with session:
+        if isinstance(admission, MaterializedExecutionAdmission):
+            materialized = True
+            attempt_claim_root: str | Path = admission.attempt_claim_root
+            environment_lease_root: str | Path = admission.environment_lease_root
+        else:
+            materialized = False
+            attempt_claim_root = ""
+            environment_lease_root = ""
+
+        def unavailable_approved_bridge(_payload: Mapping[str, Any]) -> Any:
+            raise RuntimeError("approved bridge is unavailable for legacy execution")
+
+        execute_approved_trial: Callable[..., Any] = unavailable_approved_bridge
+        if materialized:
+            from clawgym.execution_bridge import execute_approved_trial as approved_bridge
+
+            execute_approved_trial = approved_bridge
+
+        def claim_attempt(request: Mapping[str, Any]) -> Mapping[str, Any]:
+            from clawgym.lifecycle_v2 import claim_attempt_v2
+
+            return claim_attempt_v2(
+                root=str(attempt_claim_root),
+                approval_digest=cast(Mapping[str, Any], approval_document)["approval_record_digest"],
+                trial_digest=cast(Mapping[str, Any], trial_document)["trial_digest"],
+                attempt_request_digest=request["attempt_request_digest"],
+                attempt_number=request["attempt_number"],
+                attempt_id=request["execution_attempt_id"],
+                runtime_revision=args.provider_revision,
             )
-            sink.write_bytes("host/execution-attempt-claim.json", canonical_json_bytes(claim), media_type="application/json")
-            result = execute_approved_trial(
+
+        def approved_executor(payload: Mapping[str, Any]) -> Any:
+            claim = payload["attempt_claim"]
+            return execute_approved_trial(
                 episode_id=args.episode_id,
-                request_document=request_document,
-                candidate_document=candidate_document,
-                materialization_receipt=receipt_document,
-                parent_agent_release_document=parent_document,
+                request_document=cast(Mapping[str, Any], payload["validation_request"]),
+                candidate_document=cast(Mapping[str, Any], payload["candidate"]),
+                materialization_receipt=cast(Mapping[str, Any], payload["materialization_receipt"]),
+                parent_agent_release_document=cast(Mapping[str, Any], payload["parent_agent_release"]),
                 run_document=run_document,
                 agent_release_document=agent_document,
                 environment_release_document=environment_document,
                 registry=registry,
                 expected_materializer_revision=args.provider_revision,
                 expected_seed=run.seed,
-                approval_document=approval_document,
-                matrix_document=matrix_document,
-                trial_document=trial_document,
-                attempt_request_document=attempt_request_document,
-                attempt_ledger_document=attempt_ledger_document,
-                attempt_claim_document=claim,
+                approval_document=cast(Mapping[str, Any], payload["approval"]),
+                matrix_document=cast(Mapping[str, Any], payload["matrix"]),
+                trial_document=cast(Mapping[str, Any], payload["trial"]),
+                attempt_request_document=cast(Mapping[str, Any], attempt_request_document),
+                attempt_ledger_document=cast(Mapping[str, Any], attempt_ledger_document),
+                attempt_claim_document=cast(Mapping[str, Any], claim),
+                environment_lease_document=cast(Mapping[str, Any], environment_lease_document),
                 readiness_attestation_document=readiness_attestation_document,
                 e0_agent_release_document=e0_agent_release_document,
                 expected_clawgym_revision=args.clawgym_revision,
+                attempt_claim_root=str(attempt_claim_root),
+                environment_lease_root=str(environment_lease_root),
             )
-        else:
-            result = execute_worker(
+
+        def write_claim(claim: Mapping[str, Any]) -> None:
+            sink.write_bytes(
+                "host/execution-attempt-claim.json", canonical_json_bytes(claim), media_type="application/json"
+            )
+
+        deps = WorkerRuntimeDeps(
+            claim_attempt=claim_attempt,
+            approved_executor=approved_executor,
+            legacy_executor=lambda _documents: execute_worker(
                 episode_id=args.episode_id,
                 run_document=run_document,
                 agent_release_document=agent_document,
                 environment_release_document=environment_document,
                 registry=registry,
-            )
-        print(json.dumps({"bundle_digest": result.bundle_digest, "episode_digest": result.episode_digest}))
-    finally:
-        request_shutdown()
-        api_thread.join(timeout=15)
+            ),
+            write_claim=write_claim,
+        )
+        outcome = execute_admitted_trial(
+            materialized=materialized,
+            documents={
+                "validation_request": request_document,
+                "candidate": candidate_document,
+                "materialization_receipt": receipt_document,
+                "parent_agent_release": parent_document,
+                "approval": approval_document,
+                "matrix": matrix_document,
+                "trial": trial_document,
+                "attempt_request": attempt_request_document,
+            },
+            deps=deps,
+        )
+        print(json.dumps({"bundle_digest": outcome.bundle_digest, "episode_digest": outcome.episode_digest}))
 
 
 def parser() -> argparse.ArgumentParser:
@@ -430,6 +466,8 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--attempt-request")
     command.add_argument("--attempt-ledger")
     command.add_argument("--attempt-claim-root")
+    command.add_argument("--environment-lease")
+    command.add_argument("--environment-lease-root")
     command.add_argument("--runtime-workdir")
     command.add_argument("--readiness-attestation")
     command.add_argument("--e0-agent-release")

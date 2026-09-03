@@ -7,11 +7,10 @@ import re
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from clawgym.contracts import EnvironmentRelease, sha256_digest
 from clawgym.contracts.validation import ContractValidationError, reject_forbidden_content
-
 
 UPSTREAM_REVISION: Final = "ba07faf1a322f9b6d4a279643bb796aa2f36f64b"
 ENVIRONMENT_PROVIDER_ID: Final = "sregym.environment.v1"
@@ -129,21 +128,24 @@ def _string(value: Any, location: str) -> str:
 
 
 def _string_list(value: Any, location: str) -> list[str]:
-    if not isinstance(value, list) or not value or any(not isinstance(item, str) or not item for item in value):
+    if not isinstance(value, list) or not value:
         raise ContractValidationError(f"{location} must be a non-empty string array")
-    if len(value) != len(set(value)):
+    raw_values = cast(list[Any], value)
+    if any(not isinstance(item, str) or not item for item in raw_values):
+        raise ContractValidationError(f"{location} must be a non-empty string array")
+    values = cast(list[str], raw_values)
+    if len(values) != len(set(values)):
         raise ContractValidationError(f"{location} must not contain duplicates")
-    return value
+    return values
 
 
 def _validate_manifest(kind: str, document: Mapping[str, Any]) -> None:
     schema_id, expected_fields = _SCHEMAS[kind]
-    if set(document) != expected_fields:
-        missing = sorted(expected_fields - set(document))
-        extra = sorted(set(document) - expected_fields)
-        raise ContractValidationError(
-            f"{kind} manifest fields mismatch; missing={missing}, extra={extra}"
-        )
+    expected = set(expected_fields)
+    if set(document) != expected:
+        missing = sorted(expected - set(document))
+        extra = sorted(set(document) - expected)
+        raise ContractValidationError(f"{kind} manifest fields mismatch; missing={missing}, extra={extra}")
     if document["schema_id"] != schema_id:
         raise ContractValidationError(f"{kind} manifest schema_id is invalid")
     reject_forbidden_content(document)
@@ -153,14 +155,11 @@ def _validate_manifest(kind: str, document: Mapping[str, Any]) -> None:
         if not re.fullmatch(r"[0-9a-f]{40}", _string(document["upstream_revision"], "upstream_revision")):
             raise ContractValidationError("upstream_revision must be a full commit SHA")
         _string_list(document["problems"], "problems")
-        submodules = document["submodules"]
-        if not isinstance(submodules, dict) or not submodules:
+        submodules_value = document["submodules"]
+        if not isinstance(submodules_value, dict) or not submodules_value:
             raise ContractValidationError("submodules must be a non-empty object")
-        if any(
-            not isinstance(path, str)
-            or not re.fullmatch(r"[0-9a-f]{40}", revision)
-            for path, revision in submodules.items()
-        ):
+        submodules = cast(dict[str, Any], submodules_value)
+        if any(not re.fullmatch(r"[0-9a-f]{40}", revision) for _, revision in submodules.items()):
             raise ContractValidationError("submodule revisions must be full commit SHAs")
     elif kind == "problem":
         _string(document["suite_id"], "suite_id")
@@ -178,8 +177,9 @@ def _validate_manifest(kind: str, document: Mapping[str, Any]) -> None:
     elif kind == "fault":
         for field in ("fault_id", "problem_id", "mechanism", "target_component", "seed_behavior"):
             _string(document[field], field)
-        steady = document["steady_state"]
-        if not isinstance(steady, Mapping) or set(steady) != {
+        steady_value = document["steady_state"]
+        steady = cast(Mapping[str, Any], steady_value)
+        if not isinstance(steady_value, Mapping) or set(steady) != {
             "signal",
             "baseline_window_seconds",
             "minimum_success_ratio",
@@ -187,11 +187,7 @@ def _validate_manifest(kind: str, document: Mapping[str, Any]) -> None:
             raise ContractValidationError("steady_state has invalid fields")
         _string(steady["signal"], "steady_state.signal")
         baseline_window = steady["baseline_window_seconds"]
-        if (
-            isinstance(baseline_window, bool)
-            or not isinstance(baseline_window, int)
-            or baseline_window <= 0
-        ):
+        if isinstance(baseline_window, bool) or not isinstance(baseline_window, int) or baseline_window <= 0:
             raise ContractValidationError("baseline_window_seconds must be positive")
         if steady["minimum_success_ratio"] != "1.0":
             raise ContractValidationError("WP4 requires a complete steady-state baseline")
@@ -260,8 +256,9 @@ def load_release_manifests(root: str | Path) -> dict[str, dict[str, Any]]:
             document = json.load(handle)
         if not isinstance(document, dict):
             raise ContractValidationError(f"{kind} manifest must be an object")
-        _validate_manifest(kind, document)
-        documents[kind] = document
+        typed_document = cast(dict[str, Any], document)
+        _validate_manifest(kind, typed_document)
+        documents[kind] = typed_document
 
     suite = documents["suite"]
     problem = documents["problem"]
@@ -309,10 +306,7 @@ def provider_configuration_digests(
 ) -> dict[str, str]:
     return {
         "sregym.environment.v1": sha256_digest(
-            {
-                kind: manifests[kind]
-                for kind in ("suite", "problem", "partition", "fault")
-            }
+            {kind: manifests[kind] for kind in ("suite", "problem", "partition", "fault")}
         ),
         "sregym.oracle.v1": sha256_digest(manifests["oracle"]),
         "sregym.filtered-tools.v1": sha256_digest(manifests["tool"]),
@@ -353,17 +347,10 @@ class SREGymReleaseBuilder:
         submodules = self._git("submodule", "status", "--recursive").splitlines()
         if any(not line or line[0] != " " for line in submodules):
             raise ContractValidationError("recursive submodule checkout is not at its pinned revision")
-        with (self.repository_root / "clawgym_overlay" / "upstream-baseline.json").open(
-            encoding="utf-8"
-        ) as handle:
+        with (self.repository_root / "clawgym_overlay" / "upstream-baseline.json").open(encoding="utf-8") as handle:
             baseline = json.load(handle)
-        expected_submodules = {
-            item["path"]: item["revision"] for item in baseline["submodules"]
-        }
-        actual_submodules = {
-            line[1:].split(maxsplit=2)[1]: line[1:].split(maxsplit=2)[0]
-            for line in submodules
-        }
+        expected_submodules = {item["path"]: item["revision"] for item in baseline["submodules"]}
+        actual_submodules = {line[1:].split(maxsplit=2)[1]: line[1:].split(maxsplit=2)[0] for line in submodules}
         if actual_submodules != expected_submodules:
             raise ContractValidationError("recursive submodule revisions differ from provenance")
         return overlay_revision

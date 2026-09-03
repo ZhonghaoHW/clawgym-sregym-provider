@@ -5,8 +5,8 @@ import runpy
 from pathlib import Path
 
 import pytest
-
 from clawgym.contracts import ContractValidationError
+
 from clawgym_overlay.release import (
     MANIFEST_FILENAMES,
     SREGymReleaseBuilder,
@@ -14,11 +14,10 @@ from clawgym_overlay.release import (
     load_release_manifests,
     provider_configuration_digests,
 )
+
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_ROOT = ROOT / "clawgym_overlay" / "manifests"
-SREGYM_LITE_PROBLEMS = runpy.run_path(
-    ROOT / "sregym" / "conductor" / "problem_sets.py"
-)["SREGYM_LITE_PROBLEMS"]
+SREGYM_LITE_PROBLEMS = runpy.run_path(ROOT / "sregym" / "conductor" / "problem_sets.py")["SREGYM_LITE_PROBLEMS"]
 
 
 def manifests():
@@ -83,6 +82,43 @@ def test_manifest_rejects_extra_and_forbidden_content(tmp_path: Path) -> None:
     problem_path.write_text(__import__("json").dumps(document))
     with pytest.raises(ContractValidationError):
         load_release_manifests(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("kind", "mutate"),
+    [
+        ("suite", lambda d: d.update(upstream_revision="bad")),
+        ("suite", lambda d: d.update(problems=["network_policy_block", "network_policy_block"])),
+        ("suite", lambda d: d.update(submodules={})),
+        ("problem", lambda d: d.update(task_stages=["unsupported"])),
+        ("partition", lambda d: d.update(partition="hidden")),
+        ("fault", lambda d: d.update(steady_state={})),
+        (
+            "fault",
+            lambda d: d.update(
+                steady_state={"signal": "x", "baseline_window_seconds": 1, "minimum_success_ratio": "0.5"}
+            ),
+        ),
+        ("fault", lambda d: d.update(max_experiment_duration_seconds=1)),
+        ("fault", lambda d: d.update(abort_conditions=[])),
+        ("fault", lambda d: d.update(rollback_order=[])),
+        ("fault", lambda d: d.update(cleanup_failure_policy="continue")),
+        ("oracle", lambda d: d.update(verdict_policy="agent-reported")),
+        ("tool", lambda d: d.update(interfaces=[])),
+        ("observation", lambda d: d.update(capture_windows=["baseline"])),
+        ("execution", lambda d: d.update(timeout_seconds=0)),
+        ("execution", lambda d: d.update(deployment_cache_policy="reuse")),
+        ("execution", lambda d: d.update(runtime_image_policy="any")),
+        ("execution", lambda d: d.update(deployment_lock_digest="bad")),
+        ("execution", lambda d: d.update(kind_topology_sha256="bad")),
+    ],
+)
+def test_manifest_rejects_invalid_dimension_values(kind: str, mutate) -> None:
+    """Every release dimension must fail closed on its reviewed grammar."""
+    documents = manifests()
+    mutate(documents[kind])
+    with pytest.raises(ContractValidationError):
+        build_environment_release(overlay_revision="a" * 40, manifests=documents)
 
 
 def test_repository_builder_rejects_dirty_checkout(monkeypatch) -> None:

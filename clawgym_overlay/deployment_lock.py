@@ -6,11 +6,10 @@ import json
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from clawgym.contracts import sha256_digest
 from clawgym.contracts.validation import ContractValidationError, reject_forbidden_content
-
 
 LOCK_SCHEMA_ID: Final = "clawgym.sregym_deployment_lock.v1"
 REQUIRED_ARTIFACTS: Final = frozenset(
@@ -53,15 +52,17 @@ def validate_deployment_lock(document: Mapping[str, Any]) -> None:
     if document["platform"] != "linux-amd64":
         raise ContractValidationError("deployment lock supports only linux-amd64")
     reject_forbidden_content(document)
-    artifacts = document["artifacts"]
-    if not isinstance(artifacts, list) or not artifacts:
+    artifacts_value = document["artifacts"]
+    if not isinstance(artifacts_value, list) or not artifacts_value:
         raise ContractValidationError("deployment lock artifacts must be non-empty")
+    artifacts = cast(list[Any], artifacts_value)
     names: set[str] = set()
     runtime_images = 0
     for index, artifact in enumerate(artifacts):
         location = f"artifacts[{index}]"
         if not isinstance(artifact, Mapping):
             raise ContractValidationError(f"{location} has invalid fields")
+        artifact = cast(Mapping[str, Any], artifact)
         name = artifact.get("name")
         expected_fields = {
             "name",
@@ -101,10 +102,8 @@ def validate_deployment_lock(document: Mapping[str, Any]) -> None:
             if "@sha256:" not in source or not source.endswith(integrity):
                 raise ContractValidationError(f"{location} image source must use its digest")
             if name.startswith("runtime-image."):
-                if not _DIGEST.fullmatch(artifact["platform_integrity"]):
-                    raise ContractValidationError(
-                        f"{location}.platform_integrity must be a SHA-256 digest"
-                    )
+                if not _DIGEST.fullmatch(str(artifact["platform_integrity"])):
+                    raise ContractValidationError(f"{location}.platform_integrity must be a SHA-256 digest")
                 runtime_images += 1
         elif not isinstance(source, str) or not source.startswith("https://"):
             raise ContractValidationError(f"{location}.source must be an HTTPS identity")
@@ -121,8 +120,9 @@ def load_deployment_lock(path: str | Path) -> dict[str, Any]:
         document = json.load(handle)
     if not isinstance(document, dict):
         raise ContractValidationError("deployment lock must be an object")
-    validate_deployment_lock(document)
-    return document
+    typed_document = cast(dict[str, Any], document)
+    validate_deployment_lock(typed_document)
+    return typed_document
 
 
 def deployment_lock_digest(document: Mapping[str, Any]) -> str:

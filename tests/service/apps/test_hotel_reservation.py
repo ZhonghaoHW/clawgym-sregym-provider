@@ -62,9 +62,7 @@ spec:
 
 
 def test_deployment_env_overrides_reject_unknown_targets(tmp_path):
-    app = HotelReservation(
-        deployment_env_overrides={"missing": {"container": {"SETTING": "value"}}}
-    )
+    app = HotelReservation(deployment_env_overrides={"missing": {"container": {"SETTING": "value"}}})
     app.k8s_deploy_path = tmp_path
 
     try:

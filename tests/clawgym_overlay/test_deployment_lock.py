@@ -5,17 +5,15 @@ import json
 from pathlib import Path
 
 import pytest
+from clawgym.contracts import ContractValidationError, sha256_digest
 
-from clawgym.contracts import ContractValidationError
-from clawgym.contracts import sha256_digest
 from clawgym_overlay.deployment_lock import (
     deployment_lock_digest,
     load_deployment_lock,
     validate_deployment_lock,
 )
-from clawgym_overlay.worker import verify_formal_kind_topology, verify_release_revisions
 from clawgym_overlay.r0_panel_bridge import load_r0_panel_bridge, resolve_r0_panel_profile
-
+from clawgym_overlay.worker import verify_formal_kind_topology, verify_release_revisions
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -81,11 +79,7 @@ def test_complete_lock_has_stable_digest() -> None:
     [
         (
             lambda document: document.update(
-                artifacts=[
-                    item
-                    for item in document["artifacts"]
-                    if not item["name"].startswith("runtime-image.")
-                ]
+                artifacts=[item for item in document["artifacts"] if not item["name"].startswith("runtime-image.")]
             ),
             "missing artifacts",
         ),
@@ -103,9 +97,7 @@ def test_complete_lock_has_stable_digest() -> None:
         ),
         (
             lambda document: next(
-                item
-                for item in document["artifacts"]
-                if item["name"] == "runtime-image.application.recommendation"
+                item for item in document["artifacts"] if item["name"] == "runtime-image.application.recommendation"
             ).update(platform_integrity="invalid"),
             "platform_integrity",
         ),
@@ -133,16 +125,12 @@ def test_each_artifact_changes_lock_digest() -> None:
 
 def test_committed_wp4_lock_is_valid_and_bound_by_execution_profile() -> None:
     document = load_deployment_lock(ROOT / "clawgym_overlay/deployment.wp4.lock.json")
-    profile = json.loads(
-        (ROOT / "clawgym_overlay/manifests/execution.sregym-container.v1.json").read_text()
-    )
+    profile = json.loads((ROOT / "clawgym_overlay/manifests/execution.sregym-container.v1.json").read_text())
 
     assert len(document["artifacts"]) == 51
     assert profile["deployment_lock_digest"] == deployment_lock_digest(document)
     openebs_images = [
-        item
-        for item in document["artifacts"]
-        if item["name"].startswith("runtime-image.infrastructure.openebs-")
+        item for item in document["artifacts"] if item["name"].startswith("runtime-image.infrastructure.openebs-")
     ]
     assert len(openebs_images) == 5
     assert all(item["source"].startswith("oci://quay.io/openebs/") for item in openebs_images)
@@ -152,9 +140,7 @@ def test_committed_wp4_lock_is_valid_and_bound_by_execution_profile() -> None:
 def test_formal_kind_topology_is_content_addressed_by_execution_profile() -> None:
     import hashlib
 
-    profile = json.loads(
-        (ROOT / "clawgym_overlay/manifests/execution.sregym-container.v1.json").read_text()
-    )
+    profile = json.loads((ROOT / "clawgym_overlay/manifests/execution.sregym-container.v1.json").read_text())
     topology = (ROOT / "clawgym_overlay/kind.wp4.formal.yaml").read_bytes()
 
     assert profile["kind_topology_sha256"] == hashlib.sha256(topology).hexdigest()
@@ -195,7 +181,9 @@ def test_r0_panel_compatibility_bridge_preserves_historical_release_identity() -
 def test_r0_panel_bridge_rejects_non_r0_release() -> None:
     bridge = load_r0_panel_bridge(ROOT / "clawgym_overlay/manifests/r0-panel-compatibility-bridge.v1.json")
     with pytest.raises(Exception, match="frozen R0|scoped"):
-        resolve_r0_panel_profile(bridge, agent_release={"agent_release_digest": "0" * 64}, manifest_root=ROOT / "clawgym_overlay/manifests")
+        resolve_r0_panel_profile(
+            bridge, agent_release={"agent_release_digest": "0" * 64}, manifest_root=ROOT / "clawgym_overlay/manifests"
+        )
 
 
 @pytest.mark.parametrize("field", ["value", "revision", "path"])

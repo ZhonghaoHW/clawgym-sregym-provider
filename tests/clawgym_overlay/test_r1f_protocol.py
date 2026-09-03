@@ -3,18 +3,17 @@ from __future__ import annotations
 import asyncio
 import json
 
-from langgraph.types import Command
 from langchain_core.messages import AIMessage
+from langgraph.types import Command
 
 from clawgym_overlay.r1f_protocol import (
-    R1fGate,
     TARGET,
+    R1fGate,
     endpoint_result_ready,
     handoff_from_trajectory_records,
     normalise_handoff_submission,
     normalise_handoff_tool_argument,
 )
-
 
 RUN = "a" * 64
 RELEASE = "b" * 64
@@ -45,41 +44,39 @@ def test_attempt10_style_multiline_submission_normalises_to_host_bound_handoff()
 
 
 def test_real_r1f_submission_with_narrative_evidence_normalises() -> None:
-    submission = _attempt10_style_submission().replace(
-        '["policy denies ingress and egress"]', '"policy denies ingress and egress"'
-    ).replace(
-        '["reread the policy", "read recommendation endpoints"]',
-        '"reread the policy and read recommendation endpoints"',
+    submission = (
+        _attempt10_style_submission()
+        .replace('["policy denies ingress and egress"]', '"policy denies ingress and egress"')
+        .replace(
+            '["reread the policy", "read recommendation endpoints"]',
+            '"reread the policy and read recommendation endpoints"',
+        )
     )
-    handoff = normalise_handoff_submission(
-        submission, run_manifest_digest=RUN, agent_release_digest=RELEASE
-    )
+    handoff = normalise_handoff_submission(submission, run_manifest_digest=RUN, agent_release_digest=RELEASE)
     assert handoff is not None
     assert handoff["evidence"] == ["policy denies ingress and egress"]
-    assert handoff["verification_plan"] == [
-        "reread the policy and read recommendation endpoints"
-    ]
+    assert handoff["verification_plan"] == ["reread the policy and read recommendation endpoints"]
 
 
 def test_structured_tool_argument_accepts_bare_json_without_marker() -> None:
     answer = _attempt10_style_submission().removeprefix("R1F_HANDOFF_JSON\n")
-    handoff = normalise_handoff_tool_argument(
-        answer, run_manifest_digest=RUN, agent_release_digest=RELEASE
-    )
+    handoff = normalise_handoff_tool_argument(answer, run_manifest_digest=RUN, agent_release_digest=RELEASE)
     assert handoff is not None
     assert handoff["candidate_resource"] == TARGET
 
 
 def test_structured_tool_argument_rejects_trailing_text_and_extra_fields() -> None:
     answer = _attempt10_style_submission().removeprefix("R1F_HANDOFF_JSON\n")
-    assert normalise_handoff_tool_argument(
-        answer + " trailing", run_manifest_digest=RUN, agent_release_digest=RELEASE
-    ) is None
+    assert (
+        normalise_handoff_tool_argument(answer + " trailing", run_manifest_digest=RUN, agent_release_digest=RELEASE)
+        is None
+    )
     value = json.loads(answer)
     value["extra"] = "not allowed"
-    assert normalise_handoff_tool_argument(
-        json.dumps(value), run_manifest_digest=RUN, agent_release_digest=RELEASE
-    ) is None
+    assert (
+        normalise_handoff_tool_argument(json.dumps(value), run_manifest_digest=RUN, agent_release_digest=RELEASE)
+        is None
+    )
 
 
 def test_handoff_rejects_non_target_or_missing_semantic_evidence() -> None:
@@ -87,15 +84,9 @@ def test_handoff_rejects_non_target_or_missing_semantic_evidence() -> None:
         "NetworkPolicy/hotel-reservation/deny-all-recommendation",
         "Service/hotel-reservation/recommendation",
     )
-    assert normalise_handoff_submission(
-        wrong_target, run_manifest_digest=RUN, agent_release_digest=RELEASE
-    ) is None
-    missing_evidence = _attempt10_style_submission().replace(
-        '["policy denies ingress and egress"]', "[]"
-    )
-    assert normalise_handoff_submission(
-        missing_evidence, run_manifest_digest=RUN, agent_release_digest=RELEASE
-    ) is None
+    assert normalise_handoff_submission(wrong_target, run_manifest_digest=RUN, agent_release_digest=RELEASE) is None
+    missing_evidence = _attempt10_style_submission().replace('["policy denies ingress and egress"]', "[]")
+    assert normalise_handoff_submission(missing_evidence, run_manifest_digest=RUN, agent_release_digest=RELEASE) is None
 
 
 def test_trajectory_replay_uses_structured_tool_arguments_not_transcript_lines() -> None:
@@ -118,9 +109,7 @@ def test_trajectory_replay_uses_structured_tool_arguments_not_transcript_lines()
             ),
         },
     )
-    handoff = handoff_from_trajectory_records(
-        records, run_manifest_digest=RUN, agent_release_digest=RELEASE
-    )
+    handoff = handoff_from_trajectory_records(records, run_manifest_digest=RUN, agent_release_digest=RELEASE)
     assert handoff["status"] == "complete"
     assert handoff["candidate_resource"] == TARGET
 
@@ -132,9 +121,7 @@ def test_gate_requires_exact_single_delete_and_verification() -> None:
         "NAME AGE\ndeny-all-recommendation 1m",
         stage="mitigation",
     )
-    assert not gate.permits_mutation(
-        "kubectl delete service recommendation -n hotel-reservation", stage="mitigation"
-    )
+    assert not gate.permits_mutation("kubectl delete service recommendation -n hotel-reservation", stage="mitigation")
     assert not gate.record(
         "kubectl delete networkpolicy deny-all-recommendation -n hotel-reservation --ignore-not-found",
         "deleted",
@@ -147,7 +134,7 @@ def test_gate_requires_exact_single_delete_and_verification() -> None:
     )
     assert gate.record(
         "kubectl get networkpolicy deny-all-recommendation -n hotel-reservation",
-        "Error from server (NotFound): networkpolicies.networking.k8s.io \"deny-all-recommendation\" not found",
+        'Error from server (NotFound): networkpolicies.networking.k8s.io "deny-all-recommendation" not found',
         stage="mitigation",
     )
     assert gate.record(
@@ -221,9 +208,7 @@ def test_runtime_submit_hook_normalises_without_triggering_conductor(monkeypatch
     monkeypatch.setattr(driver, "_handoff_rejections", 0)
     monkeypatch.setattr(driver, "_gate", R1fGate())
 
-    result = asyncio.run(
-        driver._gated_diagnosis_submit(_attempt10_style_submission(), {"num_steps": 4}, "call-1")
-    )
+    result = asyncio.run(driver._gated_diagnosis_submit(_attempt10_style_submission(), {"num_steps": 4}, "call-1"))
 
     assert isinstance(result, Command)
     assert not observed
@@ -242,9 +227,10 @@ def test_r1i_text_handoff_is_promoted_to_explicit_submit_tool_call(monkeypatch) 
         submit_tool = Submit()
 
     answer = _attempt10_style_submission()
-    original = lambda self, state: {
-        "messages": [AIMessage(content=[{"type": "text", "text": answer}])]
-    }
+
+    def original(self: object, state: object) -> dict[str, list[AIMessage]]:
+        return {"messages": [AIMessage(content=[{"type": "text", "text": answer}])]}
+
     monkeypatch.setenv("SREGYM_RUN_MANIFEST_DIGEST", RUN)
     monkeypatch.setenv("SREGYM_AGENT_RELEASE_DIGEST", RELEASE)
     monkeypatch.setattr(driver, "_original_diagnosis_call_model", original)

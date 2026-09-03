@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import shlex
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from clawgym.contracts import sha256_digest
 
@@ -19,20 +20,25 @@ def capture_oracle_attribution(conductor: Any, phase: str, clock: Callable[[], s
     policy_exists = None
     endpoint_ready = None
     try:
-        conductor.current_problem.networking_v1.read_namespaced_network_policy("deny-all-recommendation", "hotel-reservation")
+        conductor.current_problem.networking_v1.read_namespaced_network_policy(
+            "deny-all-recommendation", "hotel-reservation"
+        )
         policy_exists = True
     except Exception as exc:
-        if getattr(exc, "status", None) == 404:
-            policy_exists = False
-        else:
-            policy_exists = None
+        policy_exists = False if getattr(exc, "status", None) == 404 else None
     try:
         problem = conductor.current_problem
         deployment = problem.kubectl.get_deployment(problem.faulty_service, problem.namespace)
         endpoint_ready = bool(problem.mitigation_oracle._service_has_ready_target_endpoint(deployment))
     except Exception:
         endpoint_ready = None
-    return {"captured_at": now, "conductor_stage": str(getattr(conductor, "stage", "unknown")), "waiting_for_agent": bool(getattr(conductor, "waiting_for_agent", False)), "policy_exists": policy_exists, "target_endpoint_ready": endpoint_ready}
+    return {
+        "captured_at": now,
+        "conductor_stage": str(getattr(conductor, "stage", "unknown")),
+        "waiting_for_agent": bool(getattr(conductor, "waiting_for_agent", False)),
+        "policy_exists": policy_exists,
+        "target_endpoint_ready": endpoint_ready,
+    }
 
 
 @dataclass(slots=True)
@@ -54,19 +60,15 @@ class SREGymLivePhaseProbe:
 
     @staticmethod
     def _ready(condition_owner: Any) -> bool:
-        return any(
-            condition.type == "Ready" and condition.status == "True"
-            for condition in (condition_owner.status.conditions or [])
-        )
+        conditions: list[Any] = list(getattr(getattr(condition_owner, "status", None), "conditions", None) or [])
+        return any(condition.type == "Ready" and condition.status == "True" for condition in conditions)
 
     def _nodes_ready(self) -> bool:
         nodes = self.conductor.kubectl.core_v1_api.list_node().items
         return len(nodes) == self.expected_nodes and all(self._ready(node) for node in nodes)
 
     def _application_ready(self) -> bool:
-        deployments = self.conductor.kubectl.apps_v1_api.list_namespaced_deployment(
-            self.namespace
-        ).items
+        deployments = self.conductor.kubectl.apps_v1_api.list_namespaced_deployment(self.namespace).items
         if not deployments:
             return False
         return all(
@@ -128,10 +130,9 @@ class SREGymLivePhaseProbe:
                 service = core.read_namespaced_service(name=name, namespace=self.namespace)
             except Exception:  # safe category only; never export exception text
                 return {"exists": False, "read_status": "error"}
+            raw_ports: list[Any] = list(getattr(getattr(service, "spec", None), "ports", None) or [])
             ports = tuple(
-                int(port.port)
-                for port in (getattr(getattr(service, "spec", None), "ports", None) or [])
-                if isinstance(getattr(port, "port", None), int)
+                int(port_value) for port in raw_ports if isinstance((port_value := getattr(port, "port", None)), int)
             )
             selector = dict(getattr(getattr(service, "spec", None), "selector", None) or {})
             return {
@@ -146,7 +147,7 @@ class SREGymLivePhaseProbe:
                 endpoints = core.read_namespaced_endpoints(name=name, namespace=self.namespace)
             except Exception:  # safe category only; never export exception text
                 return {"exists": False, "read_status": "error"}
-            subsets = getattr(endpoints, "subsets", None) or []
+            subsets: list[Any] = list(getattr(endpoints, "subsets", None) or [])
             ready = sum(len(getattr(subset, "addresses", None) or []) for subset in subsets)
             not_ready = sum(len(getattr(subset, "not_ready_addresses", None) or []) for subset in subsets)
             return {"exists": True, "ready_address_count": ready, "not_ready_address_count": not_ready}
@@ -209,25 +210,24 @@ class SREGymLivePhaseProbe:
             self._started_at = self.monotonic()
         nodes_ready = self._nodes_ready()
         non_target_impact = self._non_target_impact()
-        duration_exceeded = (
-            self.monotonic() - self._started_at > self.max_experiment_duration_seconds
-        )
+        duration_exceeded = self.monotonic() - self._started_at > self.max_experiment_duration_seconds
+        application_ready = False
+        policy_present = False
+        connectivity_healthy = False
+        baseline_samples = 0
+        baseline_diagnostic: Mapping[str, Any] | None = None
+        image_inventory: dict[str, Any] | None = None
+        image_inventory_ok = True
         if phase == "reset":
             application_ready = self._application_ready()
             policy_present = self._policy_exists()
             connectivity_healthy, baseline_samples, baseline_diagnostic = self._baseline_connectivity()
-            image_inventory = (
-                dict(self.runtime_image_inventory())
-                if self.runtime_image_inventory is not None
-                else None
+            image_inventory: dict[str, Any] | None = (
+                dict(self.runtime_image_inventory()) if self.runtime_image_inventory is not None else None
             )
             image_inventory_ok = image_inventory is None or image_inventory.get("passed") is True
             passed = (
-                nodes_ready
-                and application_ready
-                and not policy_present
-                and connectivity_healthy
-                and image_inventory_ok
+                nodes_ready and application_ready and not policy_present and connectivity_healthy and image_inventory_ok
             )
         elif phase == "fault":
             application_ready = self._application_ready()
@@ -256,13 +256,11 @@ class SREGymLivePhaseProbe:
         else:
             return {"passed": False, "reason": "unsupported_phase"}
         telemetry = None
-        capture_window = {"reset": "baseline", "fault": "fault", "recovery": "recovery"}.get(
-            phase
-        )
+        capture_window = {"reset": "baseline", "fault": "fault", "recovery": "recovery"}.get(phase)
         if capture_window is not None and self.telemetry_capture is not None:
             telemetry = dict(self.telemetry_capture(capture_window, connectivity_healthy))
         telemetry_unavailable = telemetry is not None and telemetry.get("queries_succeeded") is not True
-        abort_reasons = []
+        abort_reasons: list[str] = []
         if not nodes_ready:
             abort_reasons.append("kind-node-not-ready")
         if non_target_impact:
@@ -314,13 +312,14 @@ class SREGymLiveTelemetrySnapshotter:
     def _count(document: Any) -> int:
         if not isinstance(document, Mapping):
             return 0
-        data = document.get("data")
+        typed_document = cast(Mapping[str, Any], document)
+        data: Any = typed_document.get("data")
         if isinstance(data, list):
-            return len(data)
+            return len(cast(list[Any], data))
         if isinstance(data, Mapping):
-            result = data.get("result")
+            result = cast(Mapping[str, Any], data).get("result")
             if isinstance(result, list):
-                return len(result)
+                return len(cast(list[Any], result))
         return 0
 
     def __call__(self) -> Mapping[str, Any]:
@@ -338,9 +337,7 @@ class SREGymLiveTelemetrySnapshotter:
                 summaries[query.source] = {
                     "status": "error",
                     "result_count": 0,
-                    "summary_digest": sha256_digest(
-                        {"source": query.source, "error_type": type(exc).__name__}
-                    ),
+                    "summary_digest": sha256_digest({"source": query.source, "error_type": type(exc).__name__}),
                 }
         return summaries
 
@@ -350,10 +347,8 @@ class SREGymCausalTelemetryRecorder:
     """Retain safe summaries for the four reviewed causal observation windows."""
 
     snapshotter: SREGymLiveTelemetrySnapshotter
-    clock: Callable[[], str] = lambda: datetime.now(UTC).replace(microsecond=0).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
-    _windows: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
+    clock: Callable[[], str] = lambda: datetime.now(UTC).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _windows: dict[str, dict[str, Any]] = field(default_factory=lambda: {}, init=False)
 
     REQUIRED_WINDOWS = ("baseline", "fault", "mitigation", "recovery")
 
@@ -364,7 +359,7 @@ class SREGymCausalTelemetryRecorder:
         sources = dict(self.snapshotter())
         window_completed_at = self.clock()
         queries_succeeded = all(
-            isinstance(value, Mapping) and value.get("status") in {"success", "empty"}
+            isinstance(value, Mapping) and cast(Mapping[str, Any], value).get("status") in {"success", "empty"}
             for value in sources.values()
         )
         self._windows[window] = {
@@ -404,13 +399,18 @@ class SREGymCausalTelemetryRecorder:
 def verify_filtered_kubernetes_access(kubeconfig_path: str) -> Mapping[str, Any]:
     """Host-check the temporary filtered API without exporting its path or contents."""
 
-    from kubernetes import client, config
+    client: Any = importlib.import_module("kubernetes.client")
+    config: Any = importlib.import_module("kubernetes.config")
 
     api_client = config.new_client_from_config(config_file=kubeconfig_path)
     core = client.CoreV1Api(api_client)
-    namespaces = {item.metadata.name for item in core.list_namespace().items}
-    pods = core.list_namespaced_pod("hotel-reservation").items
-    workload_hidden = not any((pod.metadata.labels or {}).get("job") == "workload" for pod in pods)
+    namespace_items: list[Any] = list(core.list_namespace().items)
+    namespaces = {str(item.metadata.name) for item in namespace_items}
+    pods: list[Any] = list(core.list_namespaced_pod("hotel-reservation").items)
+    workload_hidden = not any(
+        cast(Mapping[str, Any], getattr(getattr(pod, "metadata", None), "labels", None) or {}).get("job") == "workload"
+        for pod in pods
+    )
     passed = "hotel-reservation" in namespaces and not ({"chaos-mesh", "khaos"} & namespaces) and workload_hidden
     return {
         "passed": passed,
@@ -427,7 +427,8 @@ def delete_validation_network_policy(
 ) -> Mapping[str, Any]:
     """Delete exactly one policy through the filtered, non-admin kubeconfig."""
 
-    from kubernetes import client, config
+    client: Any = importlib.import_module("kubernetes.client")
+    config: Any = importlib.import_module("kubernetes.config")
 
     api_client = config.new_client_from_config(config_file=kubeconfig_path)
     networking = client.NetworkingV1Api(api_client)
@@ -456,10 +457,7 @@ def build_kubernetes_telemetry_snapshotter(conductor: Any) -> SREGymLiveTelemetr
         (
             SafeTelemetryQuery(
                 "prometheus",
-                service_query(
-                    "/api/v1/namespaces/observe/services/prometheus-server:80/"
-                    "proxy/api/v1/query?query=up"
-                ),
+                service_query("/api/v1/namespaces/observe/services/prometheus-server:80/proxy/api/v1/query?query=up"),
             ),
             SafeTelemetryQuery(
                 "loki",
@@ -472,8 +470,7 @@ def build_kubernetes_telemetry_snapshotter(conductor: Any) -> SREGymLiveTelemetr
             SafeTelemetryQuery(
                 "jaeger",
                 service_query(
-                    "/api/v1/namespaces/observe/services/jaeger-out:16686/"
-                    "proxy/api/traces?service=frontend&limit=20"
+                    "/api/v1/namespaces/observe/services/jaeger-out:16686/proxy/api/traces?service=frontend&limit=20"
                 ),
             ),
         )

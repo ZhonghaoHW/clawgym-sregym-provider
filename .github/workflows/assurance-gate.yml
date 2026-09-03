@@ -1,0 +1,97 @@
+name: Provider assurance gate
+
+on:
+  push:
+    paths:
+      - "clawgym_overlay/**"
+      - "tests/clawgym_overlay/**"
+      - "pyproject.toml"
+      - "tools/**"
+      - "quality_scope.v1.json"
+      - "uv.lock"
+      - ".github/workflows/assurance-gate.yml"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - run: uv run python tools/check_lockfile_hygiene.py uv.lock
+      - run: uv run pytest
+      - run: uv run python tools/check_quality_scope.py --scope quality_scope.v1.json --root .
+      - name: Owned-source branch coverage
+        run: |
+          uv run coverage run --branch --source=clawgym_overlay -m pytest
+          uv run coverage json -o "$RUNNER_TEMP/coverage.json"
+          uv run python tools/check_coverage.py --json "$RUNNER_TEMP/coverage.json" --scope quality_scope.v1.json
+      - run: uv run ruff check clawgym_overlay
+      - run: uv run ruff format --check clawgym_overlay
+      - run: uv run pyright
+
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - run: uv run pytest --collect-only -q
+      - run: uv run python tools/check_quality_scope.py --scope quality_scope.v1.json --root .
+      # Security scope is owned production code; test fixtures are not shipped.
+      - run: uv run bandit -lll -q -r clawgym_overlay
+      - name: Owned-source branch coverage
+        run: |
+          uv run coverage run --branch --source=clawgym_overlay -m pytest
+          uv run coverage json -o "$RUNNER_TEMP/coverage.json"
+          uv run python tools/check_coverage.py --json "$RUNNER_TEMP/coverage.json" --scope quality_scope.v1.json
+      - name: Audit third-party dependency graph
+        run: |
+          uv run python tools/verify_first_party_dependency.py \
+            --archive scripts/geni_lib/mod/geni_lib_xlab-1.0.0.tar.gz \
+            --package-name geni-lib-xlab \
+            --version 1.0.0 \
+            --upstream-url https://gitlab.flux.utah.edu/emulab/geni-lib \
+            --upstream-ref local-provider-fork-1.0.0 \
+            --license-id MPL-2.0 \
+            --dependency cryptography \
+            --dependency lxml \
+            --dependency requests \
+            --dependency wrapt \
+            --output "$RUNNER_TEMP/geni-lib-xlab-attestation.json" \
+            --sbom-output "$RUNNER_TEMP/geni-lib-xlab-sbom.json"
+          uv export --no-emit-project --no-hashes --format requirements-txt > "$RUNNER_TEMP/requirements.txt"
+          # Local first-party archives and the ClawGym git checkout have no
+          # PyPI advisory identity; they are covered by source attestation and
+          # SBOM records.  The filter is an explicit allowlist, not a blanket
+          # exclusion, so all published third-party requirements remain.
+          uv run python tools/filter_audit_requirements.py \
+            --input "$RUNNER_TEMP/requirements.txt" \
+            --output "$RUNNER_TEMP/auditable-requirements.txt"
+          # uv export emits exact pins; disable dependency resolution so the
+          # audit covers the lock graph itself and never re-resolves a local
+          # first-party archive.
+          uv run pip-audit --strict --no-deps --disable-pip --timeout 30 -r "$RUNNER_TEMP/auditable-requirements.txt"
+          uv run pip-audit --strict --no-deps --disable-pip --timeout 30 --format cyclonedx-json -r "$RUNNER_TEMP/auditable-requirements.txt" > "$RUNNER_TEMP/sbom.json"
+          sha256sum "$RUNNER_TEMP/sbom.json"
+      - run: git diff --check
+
+  live:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    environment: reference-evaluation
+    steps:
+      - run: echo "Live ECS qualification remains an explicitly approved operation."

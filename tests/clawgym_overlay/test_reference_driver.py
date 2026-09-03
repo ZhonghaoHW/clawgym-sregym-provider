@@ -13,9 +13,7 @@ def test_r1b_wrapper_normalizes_host_controlled_terminal(monkeypatch) -> None:
 
     monkeypatch.setattr(reference_driver, "_upstream_wait_for_stage_switch", upstream)
     result = asyncio.run(
-        reference_driver._wait_for_host_controlled_terminal(
-            current_stage="diagnosis", target_stages={"done"}
-        )
+        reference_driver._wait_for_host_controlled_terminal(current_stage="diagnosis", target_stages={"done"})
     )
     assert result == "done"
 
@@ -42,9 +40,7 @@ def test_r1b_force_submit_does_not_make_an_extra_llm_request(monkeypatch) -> Non
 
 
 def test_panel_profile_disables_upstream_retry_pipeline() -> None:
-    config = reference_driver._panel_safe_load(
-        "max_step: 20\nmax_retry_attempts: 3\nretry_mode: validate\n"
-    )
+    config = reference_driver._panel_safe_load("max_step: 20\nmax_retry_attempts: 3\nretry_mode: validate\n")
     assert config["max_step"] == 8
     assert config["max_retry_attempts"] == 1
     assert config["retry_mode"] == "none"

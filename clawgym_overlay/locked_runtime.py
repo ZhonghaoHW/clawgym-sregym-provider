@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, cast
 
 from clawgym_overlay.deployment_lock import validate_deployment_lock
 
@@ -22,11 +23,10 @@ class LockedRuntime:
             raise LockedRuntimeError("deployment cache must be an existing regular directory")
         self.document = document
         self.cache_root = root.resolve(strict=True)
-        self.artifacts = {item["name"]: item for item in document["artifacts"]}
+        artifact_values = cast(list[dict[str, Any]], self.document["artifacts"])
+        self.artifacts: dict[str, dict[str, Any]] = {item["name"]: item for item in artifact_values}
         expected_cache = {
-            name
-            for name, artifact in self.artifacts.items()
-            if artifact["kind"] in {"manifest", "chart"}
+            name for name, artifact in self.artifacts.items() if artifact["kind"] in {"manifest", "chart"}
         }
         actual_cache = {path.name for path in self.cache_root.iterdir()}
         if actual_cache != expected_cache:
@@ -39,9 +39,7 @@ class LockedRuntime:
         if artifact["kind"] not in {"manifest", "chart"}:
             raise LockedRuntimeError(f"{name} is not a cached deployment asset")
         path = self.cache_root / name
-        if path.is_symlink() or not path.is_file() or not path.resolve(strict=True).is_relative_to(
-            self.cache_root
-        ):
+        if path.is_symlink() or not path.is_file() or not path.resolve(strict=True).is_relative_to(self.cache_root):
             raise LockedRuntimeError(f"cached artifact is missing or unsafe: {name}")
         digest = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
         if digest != artifact["integrity"]:
@@ -87,7 +85,7 @@ class LockedRuntime:
             raise LockedRuntimeError("runtime contains images absent from deployment lock")
 
     def cluster_image_inventory(self, conductor: Any) -> dict[str, Any]:
-        pods = conductor.kubectl.core_v1_api.list_pod_for_all_namespaces().items
+        pods: list[Any] = list(conductor.kubectl.core_v1_api.list_pod_for_all_namespaces().items)
         # Kubernetes/containerd may report either the multi-platform index
         # digest or the selected linux/amd64 manifest digest in
         # ``status.imageID``.  Both identities are locked; accepting either
@@ -96,8 +94,7 @@ class LockedRuntime:
         declared_digests = {
             self._image_digest(artifact[field])
             for artifact in self.document["artifacts"]
-            if artifact["kind"] == "image"
-            and artifact["name"].startswith("runtime-image.")
+            if artifact["kind"] == "image" and artifact["name"].startswith("runtime-image.")
             for field in ("integrity", "platform_integrity")
         }
         bundled_targets = {
@@ -119,44 +116,41 @@ class LockedRuntime:
         observed_tokens: list[str] = []
         container_count = 0
         for pod in pods:
-            specifications = {
-                container.name: container.image
+            specifications: dict[str, str] = {
+                str(container.name): str(container.image)
                 for containers in (
-                    pod.spec.init_containers or [],
-                    pod.spec.containers or [],
+                    cast(list[Any], pod.spec.init_containers or []),
+                    cast(list[Any], pod.spec.containers or []),
                 )
                 for container in containers
             }
             for statuses in (
-                pod.status.init_container_statuses or [],
-                pod.status.container_statuses or [],
+                cast(list[Any], pod.status.init_container_statuses or []),
+                cast(list[Any], pod.status.container_statuses or []),
             ):
                 for status in statuses:
-                    if not status.image_id:
+                    image_id = str(status.image_id or "")
+                    if not image_id:
                         continue
                     container_count += 1
-                    target = specifications.get(status.name)
+                    target = specifications.get(str(status.name))
                     # Kind-bundled images are reported by containerd as a
                     # bare manifest digest (``sha256:...``), while the lock
                     # identifies them by their image target inside the
                     # kindest/node image.  Prefer that explicit target
                     # classification before treating a bare digest as a
                     # normal registry image.
-                    if is_bundled_target(target) and status.image_id.startswith("sha256:"):
+                    if is_bundled_target(target) and image_id.startswith("sha256:"):
                         observed_tokens.append(f"kind-bundled:{target}")
                         continue
-                    if "@sha256:" in status.image_id or status.image_id.startswith("sha256:"):
-                        digest = self._image_digest(status.image_id)
+                    if "@sha256:" in image_id or image_id.startswith("sha256:"):
+                        digest = self._image_digest(image_id)
                         if digest not in declared_digests:
-                            raise LockedRuntimeError(
-                                "runtime contains images absent from deployment lock"
-                            )
+                            raise LockedRuntimeError("runtime contains images absent from deployment lock")
                         observed_tokens.append(f"digest:{digest}")
                         continue
                     if not is_bundled_target(target):
-                        raise LockedRuntimeError(
-                            "runtime contains an unrecognized image bundled in the Kind node"
-                        )
+                        raise LockedRuntimeError("runtime contains an unrecognized image bundled in the Kind node")
                     observed_tokens.append(f"kind-bundled:{target}")
         tokens = sorted(observed_tokens)
         return {

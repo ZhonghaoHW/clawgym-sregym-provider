@@ -6,10 +6,10 @@ import asyncio
 import hashlib
 import json
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Coroutine, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from clawgym.contracts import RunManifest, sha256_digest
 from clawgym.providers import (
@@ -25,7 +25,12 @@ def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _run(coroutine):
+def _mapping(value: Any) -> Mapping[str, Any] | None:
+    """Narrow untyped upstream JSON objects at the provider boundary."""
+    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else None
+
+
+def _run[T](coroutine: Coroutine[Any, Any, T]) -> T:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -38,7 +43,7 @@ class ConductorPort(Protocol):
     problem_id: str | None
     waiting_for_agent: bool
 
-    async def prepare_problem(self): ...
+    async def prepare_problem(self) -> Any: ...
 
     def inject_problem_fault(self) -> Mapping[str, Any]: ...
 
@@ -85,7 +90,8 @@ def _outcome(
                     "summary": dict(summary),
                 },
             ),
-        ) + extra_evidence,
+        )
+        + extra_evidence,
     )
 
 
@@ -108,14 +114,29 @@ class SREGymEnvironmentProvider:
     @staticmethod
     def _diagnostic_code(phase: str, probe: Mapping[str, Any], result: Any) -> tuple[str, str]:
         """Map a failed host check to a fixed, redacted dependency category."""
-        reasons = probe.get("abort_reasons", ()) if isinstance(probe, Mapping) else ()
-        if "kind-node-not-ready" in reasons:
+        reasons = probe.get("abort_reasons", ())
+        reason_codes: set[str] = (
+            {str(reason) for reason in cast(Iterable[Any], reasons)}
+            if isinstance(reasons, (tuple, list, set))
+            else set()
+        )
+        fixed_reason_codes = {
+            "command-unavailable": ("command_unavailable", "host_command"),
+            "deployment-cache-invalid": ("deployment_cache_invalid", "deployment_cache"),
+            "locked-asset-mismatch": ("locked_asset_mismatch", "deployment_lock"),
+            "filesystem-dependency-missing": ("filesystem_dependency_missing", "filesystem"),
+            "baseline-connectivity-failed": ("baseline_connectivity_failed", "connectivity"),
+            "telemetry-unavailable": ("telemetry_unavailable", "telemetry"),
+        }
+        for reason, code in fixed_reason_codes.items():
+            if reason in reason_codes:
+                return code
+        if "kind-node-not-ready" in reason_codes:
             return "cluster_not_ready", "cluster"
-        if "telemetry-unavailable" in reasons:
-            return "telemetry_unavailable", "telemetry"
         if phase == "reset" and probe.get("connectivity_healthy") is not True:
             return "baseline_connectivity_unhealthy", "connectivity"
-        if isinstance(result, Mapping) and result.get("status") in {"not_loaded", "failed"}:
+        result_mapping = _mapping(result) or {}
+        if result_mapping.get("status") in {"not_loaded", "failed"}:
             return "provider_bootstrap_failed", "provider"
         return "provider_unclassified", "provider"
 
@@ -123,17 +144,21 @@ class SREGymEnvironmentProvider:
         self, phase: str, run_manifest: RunManifest, probe: Mapping[str, Any], result: Any
     ) -> EvidencePayload:
         failure_code, dependency_class = self._diagnostic_code(phase, probe, result)
-        checks = []
+        checks: list[dict[str, Any]] = []
         for key in ("nodes_ready", "application_ready", "connectivity_healthy", "fault_present"):
             if key in probe:
                 checks.append({"check_id": key.replace("_", "."), "passed": probe[key] is True})
         if not checks:
             checks.append({"check_id": "provider.postcondition", "passed": False})
-        diagnostic = {
+        diagnostic: dict[str, Any] = {
             "schema_id": "clawgym.execution_diagnostic.v1",
             "run_manifest_digest": run_manifest.manifest_digest,
-            "agent_release_digest": getattr(getattr(run_manifest, "agent_release", None), "agent_release_digest", "0" * 64),
-            "environment_release_digest": getattr(getattr(run_manifest, "environment_release", None), "environment_release_digest", "0" * 64),
+            "agent_release_digest": getattr(
+                getattr(run_manifest, "agent_release", None), "agent_release_digest", "0" * 64
+            ),
+            "environment_release_digest": getattr(
+                getattr(run_manifest, "environment_release", None), "environment_release_digest", "0" * 64
+            ),
             "phase": phase,
             "failure_code": failure_code,
             "dependency_class": dependency_class,
@@ -145,20 +170,20 @@ class SREGymEnvironmentProvider:
             document=diagnostic,
         )
 
-    def _call(self, phase: str, run_manifest: RunManifest, operation) -> LifecycleOutcome:
+    def _call(self, phase: str, run_manifest: RunManifest, operation: Callable[[], Any]) -> LifecycleOutcome:
         started_at = self.clock()
         result = operation()
         probe = self.phase_probe(phase) if self.phase_probe is not None else {"passed": True}
-        if isinstance(probe, Mapping):
-            probe = dict(probe)
-            if probe.get("passed") is not True:
-                probe.setdefault("reason", "postcondition_failed")
-        else:
-            probe = {"passed": False, "reason": "postcondition_failed"}
+        probe = dict(probe)
+        if probe.get("passed") is not True:
+            probe.setdefault("reason", "postcondition_failed")
         completed_at = self.clock()
-        status_value = str(result.get("status", "")) if isinstance(result, Mapping) else str(result)
-        failed = probe["passed"] is not True or status_value in {"cleanup_failed", "failed", "not_loaded"} or status_value.startswith(
-            "skipped"
+        result_mapping = _mapping(result)
+        status_value = str(result_mapping.get("status", "")) if result_mapping is not None else str(result)
+        failed = (
+            probe["passed"] is not True
+            or status_value in {"cleanup_failed", "failed", "not_loaded"}
+            or status_value.startswith("skipped")
         )
         extra_evidence: tuple[EvidencePayload, ...] = ()
         if failed:
@@ -179,9 +204,7 @@ class SREGymEnvironmentProvider:
         )
 
     def reset(self, run_manifest: RunManifest) -> LifecycleOutcome:
-        return self._call(
-            "reset", run_manifest, lambda: _run(self.conductor.prepare_problem())
-        )
+        return self._call("reset", run_manifest, lambda: _run(self.conductor.prepare_problem()))
 
     def inject_fault(self, run_manifest: RunManifest) -> LifecycleOutcome:
         return self._call("fault", run_manifest, self.conductor.inject_problem_fault)
@@ -206,15 +229,21 @@ class SREGymOracleProvider:
     def _capture(self, run_manifest: RunManifest, phase: str) -> dict[str, Any]:
         if self.attribution_capture is not None:
             value = self.attribution_capture(run_manifest, phase)
-            return dict(value) if isinstance(value, Mapping) else {}
-        return {"captured_at": self.clock(), "conductor_stage": "unknown", "waiting_for_agent": self.conductor.waiting_for_agent, "policy_exists": False, "target_endpoint_ready": False}
+            return dict(value)
+        return {
+            "captured_at": self.clock(),
+            "conductor_stage": "unknown",
+            "waiting_for_agent": self.conductor.waiting_for_agent,
+            "policy_exists": False,
+            "target_endpoint_ready": False,
+        }
 
     @staticmethod
     def _summarize(results: Mapping[str, Any], required_stages: tuple[str, ...]) -> dict[str, Any]:
         summary: dict[str, Any] = {}
         for stage in required_stages:
-            value = results.get(stage.capitalize())
-            if not isinstance(value, Mapping):
+            value = _mapping(results.get(stage.capitalize()))
+            if value is None:
                 summary[stage] = {"present": False}
                 continue
             item: dict[str, Any] = {
@@ -249,19 +278,26 @@ class SREGymOracleProvider:
         completed_at = self.clock()
         post = self._capture(run_manifest, "post_oracle")
         environment_release = getattr(run_manifest, "environment_release", None)
-        environment_release_digest = getattr(
-            environment_release, "environment_release_digest", ""
-        )
+        environment_release_digest = getattr(environment_release, "environment_release_digest", "")
         attribution = {
             "schema_id": "clawgym.sregym_oracle_attribution.v1",
             "run_manifest_digest": run_manifest.manifest_digest,
             "environment_release_digest": environment_release_digest,
             "phase": "oracle",
             "pre_oracle": pre,
-            "oracle_result": {"completed_at": completed_at, "verdict": verdict, "stage": getattr(self.conductor, "stage", "unknown"), "summary_digest": hashlib.sha256(json.dumps(summary, sort_keys=True, separators=(",", ":")).encode()).hexdigest()},
+            "oracle_result": {
+                "completed_at": completed_at,
+                "verdict": verdict,
+                "stage": getattr(self.conductor, "stage", "unknown"),
+                "summary_digest": hashlib.sha256(
+                    json.dumps(summary, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest(),
+            },
             "post_oracle": post,
         }
-        attribution["attribution_digest"] = hashlib.sha256(json.dumps(attribution, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        attribution["attribution_digest"] = hashlib.sha256(
+            json.dumps(attribution, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
         return OracleEvaluation(
             outcome=_outcome(
                 phase="oracle",
@@ -271,7 +307,12 @@ class SREGymOracleProvider:
                 completed_at=completed_at,
                 run=run_manifest,
                 summary={"required_stages": list(self.required_stages), "results": summary},
-                extra_evidence=(EvidencePayload(artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-oracle-attribution.json", document=attribution),),
+                extra_evidence=(
+                    EvidencePayload(
+                        artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-oracle-attribution.json",
+                        document=attribution,
+                    ),
+                ),
             ),
             verdict=verdict,
         )
@@ -280,6 +321,12 @@ class SREGymOracleProvider:
 @dataclass(frozen=True, slots=True)
 class _SREGymAccessHandle:
     kubeconfig_path: str
+
+
+# Public aliases used by the compatibility adapters; retain the underscored
+# names above for historical imports without exposing private types across modules.
+SREGymAccessHandle = _SREGymAccessHandle
+utc_now = _utc_now
 
 
 @dataclass(slots=True)
@@ -299,7 +346,7 @@ class SREGymToolAccessProvider:
         if not path:
             raise RuntimeError("SREGym filtering proxy did not produce an access handle")
         checks = self.access_verifier(path) if self.access_verifier is not None else {"passed": True}
-        if not isinstance(checks, Mapping) or checks.get("passed") is not True:
+        if checks.get("passed") is not True:
             self.conductor.stop_k8s_proxy()
             raise RuntimeError("filtered Kubernetes access failed its host verification")
         return ToolAccessGrant(
@@ -320,9 +367,7 @@ class SREGymToolAccessProvider:
             ),
         )
 
-    def revoke(
-        self, run_manifest: RunManifest, grant: ToolAccessGrant
-    ) -> tuple[EvidencePayload, ...]:
+    def revoke(self, run_manifest: RunManifest, grant: ToolAccessGrant) -> tuple[EvidencePayload, ...]:
         if not isinstance(grant.handle, _SREGymAccessHandle):
             raise RuntimeError("tool access handle was not issued by SREGym")
         self.conductor.stop_k8s_proxy()
@@ -348,14 +393,12 @@ class SREGymObservationProvider:
 
     def collect(self, run_manifest: RunManifest) -> tuple[EvidencePayload, ...]:
         snapshot = self.snapshotter()
-        if not isinstance(snapshot, Mapping):
-            raise RuntimeError("observation snapshot must be an object")
         if "capture_windows" in snapshot:
             return self._collect_causal(run_manifest, snapshot)
         summaries: dict[str, dict[str, Any]] = {}
         for source in self.sources:
-            value = snapshot.get(source)
-            if not isinstance(value, Mapping) or set(value) != {
+            value = _mapping(snapshot.get(source))
+            if value is None or set(value) != {
                 "status",
                 "result_count",
                 "summary_digest",
@@ -370,9 +413,7 @@ class SREGymObservationProvider:
             if not isinstance(digest, str) or len(digest) != 64:
                 raise RuntimeError(f"{source} snapshot digest is invalid")
             summaries[source] = dict(value)
-        availability = "available" if any(
-            item["status"] == "success" for item in summaries.values()
-        ) else "empty"
+        availability = "available" if any(item["status"] == "success" for item in summaries.values()) else "empty"
         if any(item["status"] == "error" for item in summaries.values()):
             availability = "error"
         return (
@@ -387,34 +428,33 @@ class SREGymObservationProvider:
             ),
         )
 
-    def _collect_causal(
-        self, run_manifest: RunManifest, snapshot: Mapping[str, Any]
-    ) -> tuple[EvidencePayload, ...]:
+    def _collect_causal(self, run_manifest: RunManifest, snapshot: Mapping[str, Any]) -> tuple[EvidencePayload, ...]:
         if set(snapshot) != {"capture_windows", "causal_transition"}:
             raise RuntimeError("causal observation snapshot has invalid fields")
         windows = snapshot["capture_windows"]
         transition = snapshot["causal_transition"]
         required_windows = ("baseline", "fault", "mitigation", "recovery")
-        if not isinstance(windows, Mapping) or tuple(windows) != required_windows:
+        windows = _mapping(windows)
+        if windows is None or tuple(windows) != required_windows:
             raise RuntimeError("causal observation windows are incomplete or unordered")
         safe_windows: dict[str, Any] = {}
         query_error = False
         for window in required_windows:
-            value = windows[window]
-            if not isinstance(value, Mapping) or set(value) != {
+            value = _mapping(windows[window])
+            if value is None or set(value) != {
                 "window_started_at",
                 "window_completed_at",
                 "service_healthy",
                 "sources",
             }:
                 raise RuntimeError(f"{window} observation window is invalid")
-            sources = value["sources"]
-            if not isinstance(sources, Mapping) or set(sources) != set(self.sources):
+            sources = _mapping(value["sources"])
+            if sources is None or set(sources) != set(self.sources):
                 raise RuntimeError(f"{window} observation sources are invalid")
             safe_sources: dict[str, Any] = {}
             for source in self.sources:
-                summary = sources[source]
-                if not isinstance(summary, Mapping) or set(summary) != {
+                summary = _mapping(sources[source])
+                if summary is None or set(summary) != {
                     "status",
                     "result_count",
                     "summary_digest",
@@ -431,7 +471,8 @@ class SREGymObservationProvider:
                 "service_healthy": value["service_healthy"] is True,
                 "sources": safe_sources,
             }
-        if not isinstance(transition, Mapping) or transition.get("passed") is not True:
+        transition = _mapping(transition)
+        if transition is None or transition.get("passed") is not True:
             raise RuntimeError("causal service transition was not proven")
         if query_error:
             raise RuntimeError("causal telemetry contains a failed query")
@@ -456,7 +497,7 @@ class SREGymExecutionBackend:
     provider_id: str = field(default="sregym.container-execution.v1", init=False)
     provider_type: str = field(default="execution_backend", init=False)
 
-    def execute(self, run_manifest, adapter, grant) -> AgentInvocationResult:
+    def execute(self, run_manifest: RunManifest, adapter: Any, grant: ToolAccessGrant) -> AgentInvocationResult:
         result = adapter.invoke(run_manifest, grant.handle)
         if not isinstance(result, AgentInvocationResult):
             raise RuntimeError("AgentAdapter returned an invalid invocation result")
@@ -491,19 +532,14 @@ class SREGymEnvironmentValidationAdapter:
             self.namespace,
             self.policy_name,
         )
-        service_healthy = (
-            bool(self.steady_state_probe()) if self.steady_state_probe is not None else True
-        )
+        service_healthy = bool(self.steady_state_probe()) if self.steady_state_probe is not None else True
         telemetry = (
-            dict(self.telemetry_capture("mitigation", service_healthy))
-            if self.telemetry_capture is not None
-            else None
+            dict(self.telemetry_capture("mitigation", service_healthy)) if self.telemetry_capture is not None else None
         )
         duration_ms = max(0, int((time.monotonic() - start) * 1000))
         status = (
             "succeeded"
-            if isinstance(result, Mapping)
-            and result.get("deleted") is True
+            if result.get("deleted") is True
             and service_healthy
             and (telemetry is None or telemetry.get("queries_succeeded") is True)
             else "failed"

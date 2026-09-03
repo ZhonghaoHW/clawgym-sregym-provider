@@ -9,9 +9,7 @@ def test_prometheus_creates_namespace_before_pvc_and_helm(monkeypatch, tmp_path)
     events: list[str] = []
 
     class FakeKubectl:
-        core_v1_api = SimpleNamespace(
-            read_namespace=lambda *, name: events.append(f"namespace-read:{name}")
-        )
+        core_v1_api = SimpleNamespace(read_namespace=lambda *, name: events.append(f"namespace-read:{name}"))
 
         def exec_command(self, command: str) -> str:
             assert "create namespace observe" in command

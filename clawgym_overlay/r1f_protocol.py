@@ -14,7 +14,7 @@ import re
 import shlex
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-
+from typing import Any, cast
 
 MARKER = "R1F_HANDOFF_JSON"
 TARGET = {
@@ -34,14 +34,14 @@ _REQUIRED_SEMANTIC_FIELDS = (
 )
 
 
-def _digest(document: Mapping[str, object], field: str) -> str:
+def _digest(document: Mapping[str, Any], field: str) -> str:
     payload = {key: value for key, value in document.items() if key != field}
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     ).hexdigest()
 
 
-def _marker_payload(value: str) -> Mapping[str, object] | None:
+def _marker_payload(value: str) -> dict[str, Any] | None:
     """Parse one marker followed by a complete JSON value, including newlines."""
 
     marker_at = value.find(MARKER)
@@ -52,17 +52,18 @@ def _marker_payload(value: str) -> Mapping[str, object] | None:
         parsed, _ = json.JSONDecoder().raw_decode(tail)
     except json.JSONDecodeError:
         return None
-    return parsed if isinstance(parsed, Mapping) else None
+    return cast(dict[str, Any], parsed) if isinstance(parsed, Mapping) else None
 
 
 def _normalise_target(value: object) -> dict[str, str] | None:
     if isinstance(value, str):
         return dict(TARGET) if value.strip() == TARGET_TEXT else None
     if isinstance(value, Mapping):
+        value_object = cast(Mapping[str, Any], value)
         target = {
-            "kind": str(value.get("kind", "")),
-            "namespace": str(value.get("namespace", "")),
-            "name": str(value.get("name", "")),
+            "kind": str(value_object.get("kind", "")),
+            "namespace": str(value_object.get("namespace", "")),
+            "name": str(value_object.get("name", "")),
         }
         return target if target == TARGET else None
     return None
@@ -83,8 +84,13 @@ def _normalise_evidence_list(value: object) -> list[str] | None:
         return [item] if item else None
     if not isinstance(value, list):
         return None
-    items = [item.strip() for item in value if isinstance(item, str) and item.strip()]
-    return items if len(items) == len(value) and items else None
+    items = [item.strip() for item in cast(list[Any], value) if isinstance(item, str) and item.strip()]
+    return items if len(items) == len(cast(list[Any], value)) and items else None
+
+
+def _object(value: Any) -> Mapping[str, Any] | None:
+    """Narrow untyped JSON values at the trajectory boundary."""
+    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else None
 
 
 def endpoint_result_ready(result: str) -> bool:
@@ -106,9 +112,7 @@ def endpoint_result_ready(result: str) -> bool:
     # the sanitised ``[REDACTED]`` address, while still requiring an address
     # and the fixed recommendation port.  A bare ``8085`` is insufficient:
     # it could be the port field of an endpoint object with no ready address.
-    has_address = "[redacted]" in lower or bool(
-        re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", lower)
-    )
+    has_address = "[redacted]" in lower or bool(re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", lower))
     has_port = bool(re.search(r"(?:[:\s])8085(?:/tcp|\b)", lower))
     return has_address and has_port
 
@@ -118,7 +122,7 @@ def normalise_handoff_submission(
     *,
     run_manifest_digest: str,
     agent_release_digest: str,
-) -> dict[str, object] | None:
+) -> dict[str, Any] | None:
     """Create the canonical host-bound handoff from one model submission."""
 
     value = _marker_payload(submission)
@@ -135,7 +139,7 @@ def normalise_handoff_submission(
         or verification_plan is None
     ):
         return None
-    document: dict[str, object] = {
+    document: dict[str, Any] = {
         "schema_id": "clawgym.sregym_diagnosis_handoff.v2",
         "status": "complete",
         "run_manifest_digest": run_manifest_digest,
@@ -157,7 +161,7 @@ def normalise_handoff_tool_argument(
     *,
     run_manifest_digest: str,
     agent_release_digest: str,
-) -> dict[str, object] | None:
+) -> dict[str, Any] | None:
     """Normalize a typed ``submit_tool.ans`` argument.
 
     A tool argument is already delimited by the provider protocol, so the
@@ -167,8 +171,6 @@ def normalise_handoff_tool_argument(
     accepting the JSON object emitted by OpenAI-compatible tool calls.
     """
 
-    if not isinstance(answer, str):
-        return None
     value = answer.strip()
     if value.startswith(MARKER):
         value = value[len(MARKER) :].lstrip(" \t\r\n:")
@@ -178,7 +180,7 @@ def normalise_handoff_tool_argument(
         return None
     if value[end:].strip() or not isinstance(parsed, Mapping):
         return None
-    if set(parsed) != set(_REQUIRED_SEMANTIC_FIELDS):
+    if set(cast(Mapping[str, Any], parsed)) != set(_REQUIRED_SEMANTIC_FIELDS):
         return None
     return normalise_handoff_submission(
         MARKER + " " + json.dumps(parsed, ensure_ascii=False, separators=(",", ":")),
@@ -187,8 +189,8 @@ def normalise_handoff_tool_argument(
     )
 
 
-def incomplete_handoff(*, run_manifest_digest: str, agent_release_digest: str) -> dict[str, object]:
-    document: dict[str, object] = {
+def incomplete_handoff(*, run_manifest_digest: str, agent_release_digest: str) -> dict[str, Any]:
+    document: dict[str, Any] = {
         "schema_id": "clawgym.sregym_diagnosis_handoff.v2",
         "status": "incomplete",
         "run_manifest_digest": run_manifest_digest,
@@ -205,9 +207,7 @@ def incomplete_handoff(*, run_manifest_digest: str, agent_release_digest: str) -
     return document
 
 
-def validate_handoff(
-    document: Mapping[str, object], *, run_manifest_digest: str, agent_release_digest: str
-) -> bool:
+def validate_handoff(document: Mapping[str, Any], *, run_manifest_digest: str, agent_release_digest: str) -> bool:
     return (
         document.get("schema_id") == "clawgym.sregym_diagnosis_handoff.v2"
         and document.get("status") == "complete"
@@ -226,35 +226,38 @@ def _tool_submission_values(records: Iterable[Mapping[str, object]]) -> Iterable
             continue
         for line in str(record.get("text", "")).splitlines():
             try:
-                event = json.loads(line)
+                event: Any = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            messages = event.get("messages", event) if isinstance(event, Mapping) else {}
+            event_object = _object(event) or {}
+            messages: Any = event_object.get("messages", event_object)
             if not isinstance(messages, list):
                 continue
-            for message in messages:
-                if not isinstance(message, Mapping):
+            for raw_message in cast(list[Any], messages):
+                message = _object(raw_message)
+                if message is None:
                     continue
-                calls = message.get("tool_calls", [])
-                for call in calls if isinstance(calls, list) else []:
-                    if not isinstance(call, Mapping):
-                        continue
-                    name = str(call.get("name", call.get("function", {}).get("name", "")))
-                    arguments = call.get("args", call.get("function", {}).get("arguments", {}))
+                calls: Any = message.get("tool_calls", [])
+                for raw_call in cast(list[Any], calls) if isinstance(calls, list) else []:
+                    call = _object(raw_call) or {}
+                    function = _object(call.get("function")) or {}
+                    name = str(call.get("name", function.get("name", "")))
+                    arguments = call.get("args", function.get("arguments", {}))
                     if isinstance(arguments, str):
                         try:
                             arguments = json.loads(arguments)
                         except json.JSONDecodeError:
                             arguments = {}
-                    if name == "submit_tool" and isinstance(arguments, Mapping):
-                        answer = arguments.get("ans")
+                    arguments_object = _object(arguments)
+                    if name == "submit_tool" and arguments_object is not None:
+                        answer = arguments_object.get("ans")
                         if isinstance(answer, str):
                             yield answer
 
 
 def handoff_from_trajectory_records(
-    records: Iterable[Mapping[str, object]], *, run_manifest_digest: str, agent_release_digest: str
-) -> dict[str, object]:
+    records: Iterable[Mapping[str, Any]], *, run_manifest_digest: str, agent_release_digest: str
+) -> dict[str, Any]:
     for answer in _tool_submission_values(records):
         document = normalise_handoff_submission(
             answer,
@@ -267,9 +270,7 @@ def handoff_from_trajectory_records(
         )
         if document is not None:
             return document
-    return incomplete_handoff(
-        run_manifest_digest=run_manifest_digest, agent_release_digest=agent_release_digest
-    )
+    return incomplete_handoff(run_manifest_digest=run_manifest_digest, agent_release_digest=agent_release_digest)
 
 
 def parse_command(command: str) -> tuple[str, dict[str, str], tuple[str, ...]]:
@@ -317,12 +318,13 @@ class R1fGate:
     mutation_executed: bool = False
     target_reread: bool = False
     endpoint_ready: bool = False
-    events: list[dict[str, object]] = field(default_factory=list)
+    events: list[dict[str, object]] = field(default_factory=lambda: [])
     strict_postconditions: bool = False
 
     def snapshot(self, *, run_manifest_digest: str, agent_release_digest: str) -> dict[str, object]:
         """Return the canonical runtime state used by offline evidence."""
 
+        events: list[dict[str, object]] = list(self.events)
         document: dict[str, object] = {
             "schema_id": "clawgym.sregym_gate_event_journal.v1",
             "run_manifest_digest": run_manifest_digest,
@@ -336,7 +338,7 @@ class R1fGate:
                 "endpoint_ready": self.endpoint_ready,
                 "may_submit": self.may_submit,
             },
-            "events": list(self.events),
+            "events": events,
         }
         document["journal_digest"] = _digest(document, "journal_digest")
         return document
@@ -354,7 +356,7 @@ class R1fGate:
         )
 
     def record(self, command: str, result: str, *, stage: str) -> bool:
-        operation, resource, tokens = parse_command(command)
+        operation, resource, _ = parse_command(command)
         lower = result.lower()
         allowed = False
         if operation == "read":

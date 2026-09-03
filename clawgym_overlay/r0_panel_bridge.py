@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from clawgym.contracts import sha256_digest
 from clawgym.contracts.validation import ContractValidationError
-
 
 R0_RELEASE_DIGEST = "24c8522e88e50eddff370a12963afd9d644ca6ce176a8981fc8fca592f90b2aa"
 R0_HISTORICAL_PROFILE_DIGEST = "ff41878ae0c027efa4d3002aafc08ab4f0704a5a460383a293344d8292060088"
@@ -33,6 +32,7 @@ def load_r0_panel_bridge(path: str | Path) -> dict[str, Any]:
         raise ContractValidationError("R0 panel bridge is invalid JSON") from exc
     if not isinstance(document, dict):
         raise ContractValidationError("R0 panel bridge must be a JSON object")
+    document = cast(dict[str, Any], document)
     declared = document.get("bridge_digest")
     payload = dict(document)
     payload.pop("bridge_digest", None)
@@ -65,6 +65,4 @@ def resolve_r0_panel_profile(
         raise ContractValidationError("R0 panel bridge historical profile mismatch")
     from clawgym_overlay.reference_profiles import load_reference_agent_profile
 
-    return load_reference_agent_profile(
-        manifest_root, profile_digest=bridge["effective_profile_digest"]
-    )
+    return load_reference_agent_profile(manifest_root, profile_digest=bridge["effective_profile_digest"])

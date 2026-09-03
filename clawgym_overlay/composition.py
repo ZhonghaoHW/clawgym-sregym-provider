@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from clawgym.providers import ProviderBinding, ProviderDefinition, ProviderRegistry
+
 from clawgym_overlay.providers import (
     SREGymEnvironmentProvider,
     SREGymExecutionBackend,
@@ -18,7 +19,7 @@ from clawgym_overlay.release import provider_configuration_digests
 
 def build_sregym_bindings(
     *,
-    conductor,
+    conductor: Any,
     manifests: Mapping[str, Mapping[str, Any]],
     snapshotter: Callable[[], Mapping[str, Any]],
     phase_probe: Callable[[str], Mapping[str, Any]] | None = None,
@@ -79,7 +80,7 @@ def build_sregym_bindings(
 def register_sregym_providers(
     registry: ProviderRegistry,
     *,
-    conductor,
+    conductor: Any,
     manifests: Mapping[str, Mapping[str, Any]],
     snapshotter: Callable[[], Mapping[str, Any]],
     phase_probe: Callable[[str], Mapping[str, Any]] | None = None,

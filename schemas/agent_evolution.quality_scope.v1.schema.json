@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clawgym.dev/schemas/agent_evolution.quality_scope.v1.schema.json",
+  "title": "Explicit active/frozen quality scope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "repository", "version", "active_files", "frozen_compatibility_files", "research_only_files", "policy"],
+  "properties": {
+    "schema_id": {"const": "agent_evolution.quality_scope.v1"},
+    "repository": {"type": "string", "minLength": 1},
+    "version": {"const": 1},
+    "active_files": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z0-9_./-]+\\.py$"}, "uniqueItems": true},
+    "frozen_compatibility_files": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z0-9_./-]+\\.py$"}, "uniqueItems": true},
+    "research_only_files": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z0-9_./-]+\\.py$"}, "uniqueItems": true},
+    "compatibility_importers": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "critical_files": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["active_line_min", "active_branch_min", "critical_line_min", "critical_branch_min", "frozen_requires_digest_and_golden_replay"],
+      "properties": {
+        "active_line_min": {"type": "number", "minimum": 0, "maximum": 100},
+        "active_branch_min": {"type": "number", "minimum": 0, "maximum": 100},
+        "critical_line_min": {"type": "number", "minimum": 0, "maximum": 100},
+        "critical_branch_min": {"type": "number", "minimum": 0, "maximum": 100},
+        "frozen_requires_digest_and_golden_replay": {"const": true}
+      }
+    }
+  }
+}

@@ -12,7 +12,6 @@ from types import MethodType, ModuleType, SimpleNamespace
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -33,21 +32,25 @@ def load_conductor_classes():
     selected = [
         node
         for node in parsed.body
-        if isinstance(node, ast.ImportFrom) and node.module == "__future__"
-        or isinstance(node, ast.ClassDef) and node.name in {"ConductorConfig", "Conductor"}
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "__future__"
+        or isinstance(node, ast.ClassDef)
+        and node.name in {"ConductorConfig", "Conductor"}
     ]
     module = ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[]))
     module_name = "isolated_conductor_test"
     runtime_module = ModuleType(module_name)
     namespace = runtime_module.__dict__
-    namespace.update({
-        "__name__": module_name,
-        "asyncio": asyncio,
-        "dataclass": dataclass,
-        "StartProblemResult": StartProblemResult,
-        "time": time,
-        "is_ordered_subset": ordered_subset,
-    })
+    namespace.update(
+        {
+            "__name__": module_name,
+            "asyncio": asyncio,
+            "dataclass": dataclass,
+            "StartProblemResult": StartProblemResult,
+            "time": time,
+            "is_ordered_subset": ordered_subset,
+        }
+    )
     sys.modules[module_name] = runtime_module
     exec(compile(module, "sregym/conductor/conductor.py", "exec"), namespace)
     return namespace["ConductorConfig"], namespace["Conductor"]
