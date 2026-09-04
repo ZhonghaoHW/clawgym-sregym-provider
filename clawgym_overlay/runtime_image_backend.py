@@ -162,8 +162,10 @@ class SubprocessRuntimeImageBackend:
             if loaded.returncode != 0:
                 return False
             for node in nodes:
-                self.tag(node, platform_source, source)
-                self.tag(node, platform_source, target)
+                # A platform manifest cannot be tagged with the digest of its
+                # multi-platform index.  Keep the immutable platform digest
+                # reference and the human-readable target tag instead.
+                self.tag(node, target, platform_source)
         return True
 
     def remove(self, node: str, source: str) -> None:
@@ -321,6 +323,8 @@ def preload_images_with_backend(
             continue
         source = artifact["source"].removeprefix("oci://")
         target = _canonical_image_target(artifact["target"])
+        platform_integrity = str(artifact.get("platform_integrity", artifact["integrity"]))
+        node_source = _image_reference_with_digest(source, platform_integrity)
 
         def run_step(stage: str, operation: Callable[[], None], *, artifact_name: str = artifact["name"]) -> None:
             try:
@@ -328,27 +332,27 @@ def preload_images_with_backend(
             except LockedRuntimeError as exc:
                 raise LockedRuntimeError(f"failed to {stage} locked runtime image: {artifact_name}") from exc
 
-        if not backend.ready(control, source):
+        if not backend.ready(control, node_source):
             backend.seed_host(artifact, source, nodes)
         with TemporaryArchive() as archive:
-            if not backend.ready(control, source):
-                backend.remove(control, source)
+            if not backend.ready(control, node_source):
+                backend.remove(control, node_source)
                 for attempt in range(5):
                     try:
-                        run_step("pull", lambda source=source: backend.pull(control, source, platform))
+                        run_step("pull", lambda source=node_source: backend.pull(control, source, platform))
                         break
                     except LockedRuntimeError:
                         if attempt == 4:
                             raise
                         sleeper(min(30 * (2**attempt), 240))
-            actual = backend.resolve_platform_digest(control, source, artifact["integrity"], platform)
+            actual = backend.resolve_platform_digest(control, node_source, artifact["integrity"], platform)
             if actual != artifact["platform_integrity"]:
                 raise LockedRuntimeError(f"locked runtime platform digest mismatch: {artifact['name']}")
-            run_step("tag", lambda source=source, target=target: backend.tag(control, source, target))
-            run_step("export", lambda source=source: backend.export(control, source, platform, archive))
+            run_step("tag", lambda source=node_source, target=target: backend.tag(control, source, target))
+            run_step("export", lambda source=node_source: backend.export(control, source, platform, archive))
             for node in workers:
                 run_step("import", lambda node=node: backend.import_image(node, archive, platform))
-                run_step("tag", lambda node=node, source=source, target=target: backend.tag(node, source, target))
+                run_step("tag", lambda node=node, source=node_source, target=target: backend.tag(node, source, target))
         identities.append(f"{artifact['target']}:{artifact['integrity']}:{artifact['platform_integrity']}")
     return {
         "schema_id": "clawgym.sregym_preloaded_images.v1",

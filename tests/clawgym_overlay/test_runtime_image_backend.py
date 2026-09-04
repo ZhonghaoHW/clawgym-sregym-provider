@@ -138,8 +138,8 @@ def test_default_host_seeder_loads_and_tags_verified_image() -> None:
     )
     assert any(command[0:3] == ("kind", "load", "image-archive") for command in calls)
     assert (
+        "docker.io/library/image:latest",
         "registry/image@" + platform_digest,
-        "registry/image",
     ) in [command[-2:] for command in calls if command[0:3] == ("docker", "exec", "--privileged")]
 
 
