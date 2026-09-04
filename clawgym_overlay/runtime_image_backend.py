@@ -204,7 +204,6 @@ class SubprocessRuntimeImageBackend:
                 "images",
                 "pull",
                 "--local",
-                "--skip-metadata",
                 "--platform",
                 platform,
                 source,

@@ -81,8 +81,8 @@ def test_preload_images_uses_only_locked_sources_and_declared_targets() -> None:
     assert all(call[0][7:8] == ("remove",) for call in removals)
     pulls = calls[1::6]
     assert all(call[0][0:3] == ("docker", "exec", "--privileged") for call in pulls)
-    assert all(call[0][8:12] == ("--local", "--skip-metadata", "--platform", "linux/amd64") for call in pulls)
-    assert all("latest" not in call[0][12] for call in pulls)
+    assert all(call[0][8:11] == ("--local", "--platform", "linux/amd64") for call in pulls)
+    assert all("latest" not in call[0][11] for call in pulls)
     exports = calls[3::6]
     assert all(call[0][7:10] == ("export", "--platform", "linux/amd64") for call in exports)
     imports = calls[4::6]
@@ -121,7 +121,7 @@ def test_preload_retries_transient_control_plane_pull() -> None:
 
     def transient_pull(command, **kwargs):
         nonlocal attempts
-        if command[7:12] == ("pull", "--local", "--skip-metadata", "--platform", "linux/amd64"):
+        if command[7:11] == ("pull", "--local", "--platform", "linux/amd64"):
             attempts += 1
             if attempts < 3:
                 raise subprocess.CalledProcessError(1, command)
