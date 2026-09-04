@@ -136,6 +136,14 @@ class SubprocessRuntimeImageBackend:
         )
         if descriptor.returncode != 0 or descriptor.stdout.strip() != artifact["integrity"]:
             return False
+        # ``docker image save --platform`` imports the platform manifest into
+        # containerd.  A multi-platform index digest (``integrity``) is not
+        # necessarily present as an image reference after that import; the
+        # node only has the locked linux/amd64 child digest.  Create both the
+        # index-shaped source alias used by the preload state machine and the
+        # human-readable target tag from that platform reference.
+        platform_integrity = str(artifact.get("platform_integrity", artifact["integrity"]))
+        platform_source = _image_reference_with_digest(source, platform_integrity)
         with TemporaryArchive(prefix="clawgym-host-image-") as archive:
             saved = self.runner(
                 ("docker", "image", "save", "--platform", self.platform, "--output", str(archive), target),
@@ -154,7 +162,8 @@ class SubprocessRuntimeImageBackend:
             if loaded.returncode != 0:
                 return False
             for node in nodes:
-                self.tag(node, source, target)
+                self.tag(node, platform_source, source)
+                self.tag(node, platform_source, target)
         return True
 
     def remove(self, node: str, source: str) -> None:
@@ -276,6 +285,19 @@ def _canonical_image_target(reference: str) -> str:
     if ":" not in tail and "@" not in tail:
         result = f"{result}:latest"
     return result
+
+
+def _image_reference_with_digest(reference: str, digest: str) -> str:
+    """Return ``reference`` with its immutable platform digest substituted."""
+
+    if not reference or not digest.startswith("sha256:"):
+        raise LockedRuntimeError("image reference is missing a platform digest")
+    base = reference.split("@", maxsplit=1)[0]
+    head, separator, tail = base.rpartition("/")
+    if ":" in tail:
+        tail = tail.split(":", maxsplit=1)[0]
+    base = f"{head}{separator}{tail}"
+    return f"{base}@{digest}"
 
 
 def preload_images_with_backend(

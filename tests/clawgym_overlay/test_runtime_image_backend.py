@@ -121,6 +121,7 @@ def test_default_host_seeder_rejects_unverified_host_image() -> None:
 
 def test_default_host_seeder_loads_and_tags_verified_image() -> None:
     digest = "sha256:" + "a" * 64
+    platform_digest = "sha256:" + "b" * 64
     calls: list[tuple[str, ...]] = []
 
     def runner(command: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
@@ -131,11 +132,23 @@ def test_default_host_seeder_loads_and_tags_verified_image() -> None:
 
     backend = SubprocessRuntimeImageBackend(cluster_name="cluster", platform="linux/amd64", runner=runner)
     assert backend.seed_host(
-        {"target": "image", "integrity": digest},
+        {"target": "image", "integrity": digest, "platform_integrity": platform_digest},
         "registry/image",
         ("cluster-control-plane",),
     )
     assert any(command[0:3] == ("kind", "load", "image-archive") for command in calls)
+    assert (
+        "registry/image@" + platform_digest,
+        "registry/image",
+    ) in [command[-2:] for command in calls if command[0:3] == ("docker", "exec", "--privileged")]
+
+
+def test_image_reference_with_digest_is_deterministic() -> None:
+    from clawgym_overlay.runtime_image_backend import _image_reference_with_digest
+
+    assert _image_reference_with_digest("registry/image:tag", "sha256:" + "a" * 64) == (
+        "registry/image@sha256:" + "a" * 64
+    )
 
 
 def test_default_host_seeder_fails_closed_when_load_fails() -> None:
