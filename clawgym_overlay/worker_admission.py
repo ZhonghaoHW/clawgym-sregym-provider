@@ -60,18 +60,27 @@ def verify_campaign_authorization(
         if generation is not None and document.get("generation") != generation:
             raise ContractValidationError("campaign authorization generation mismatch") from None
         return
-    verify_campaign_trial_authorization(
-        authorization_document=document,
-        candidate_digest=candidate_digest,
-        trial_digest=trial_digest,
-        approval_digest=approval_digest,
-        case_id=case_id,
-        seed=seed,
-        partition=partition,
-        purpose=purpose,
-        campaign_digest=campaign_digest,
-        generation=generation,
-    )
+    try:
+        verify_campaign_trial_authorization(
+            authorization_document=document,
+            candidate_digest=candidate_digest,
+            trial_digest=trial_digest,
+            approval_digest=approval_digest,
+            case_id=case_id,
+            seed=seed,
+            partition=partition,
+            purpose=purpose,
+            campaign_digest=campaign_digest,
+            generation=generation,
+        )
+    except ValueError as exc:
+        # Keep the provider's public admission vocabulary stable across
+        # bridge revisions.  The bridge currently reports the narrower
+        # case/seed failure while callers historically consume "trial
+        # identity" as the actionable category.
+        if str(exc) == "campaign case/seed mismatch":
+            raise ValueError("campaign authorization trial identity mismatch") from exc
+        raise
 
 
 @dataclass(frozen=True)

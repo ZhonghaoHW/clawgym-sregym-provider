@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import runpy
+import sys
 import types
 
 import pytest
@@ -260,6 +262,11 @@ class _FakeCore:
             items=[types.SimpleNamespace(metadata=types.SimpleNamespace(name=name)) for name in self.namespaces]
         )
 
+    def read_namespace(self, *, name):
+        # The application namespace is healthy in this fake, so the runtime
+        # guard takes the explicit "present" path before provisioning.
+        return types.SimpleNamespace(metadata=types.SimpleNamespace(deletion_timestamp=None, name=name))
+
     def read_namespaced_service(self, name, namespace):
         return object()
 
@@ -510,6 +517,21 @@ def test_qualification_rejects_existing_output_directory(tmp_path):
         )
 
 
+def test_qualification_rejects_trial_profile_digest_mismatch(tmp_path):
+    trial_path, bundle_path = _valid_bundle_and_trial(tmp_path)
+    trial = json.loads(trial_path.read_text(encoding="utf-8"))
+    trial["profile_digest"] = "b" * 64
+    trial_path.write_text(json.dumps(trial), encoding="utf-8")
+    with pytest.raises(QualificationRunnerError, match="profile digest"):
+        run_qualification_trial(
+            trial_path=trial_path,
+            component_bundle_path=bundle_path,
+            output_dir=tmp_path / "out",
+            deployment_lock_path=tmp_path / "lock.json",
+            deployment_cache=tmp_path / "cache",
+        )
+
+
 def test_qualification_cli_returns_nonzero_for_semantic_result(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(
         qualification_runner,
@@ -534,3 +556,10 @@ def test_qualification_cli_returns_nonzero_for_semantic_result(monkeypatch, tmp_
         == 2
     )
     assert "semantic_disqualified" in capsys.readouterr().out
+
+
+def test_qualification_module_entrypoint_rejects_missing_cli_arguments(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["qualification_runner.py"])
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(str(qualification_runner.__file__), run_name="__main__")
+    assert exc_info.value.code == 2
