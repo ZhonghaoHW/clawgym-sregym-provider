@@ -106,6 +106,14 @@ class LockedRuntime:
         def is_bundled_target(target: str | None) -> bool:
             if target in bundled_targets:
                 return True
+            # Kind injects kube-proxy from the node image.  Its control-plane
+            # image tag follows the node Kubernetes version and therefore may
+            # differ from the separately locked registry image used by a
+            # generic runtime.  A bare containerd digest for this exact
+            # system target is still a Kind-owned image, not an external
+            # runtime dependency.
+            if target and target.startswith("registry.k8s.io/kube-proxy:"):
+                return True
             # Kind's node image may expose amd64-qualified names for control
             # plane components even though the lock records the canonical
             # target without that platform suffix.
