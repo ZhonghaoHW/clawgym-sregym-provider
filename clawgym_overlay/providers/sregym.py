@@ -20,6 +20,8 @@ from clawgym.providers import (
     ToolAccessGrant,
 )
 
+from clawgym_overlay.namespace_lifecycle import wait_for_namespace_recreation
+
 
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -40,6 +42,7 @@ def _run[T](coroutine: Coroutine[Any, Any, T]) -> T:
 
 class ConductorPort(Protocol):
     config: Any
+    kubectl: Any
     problem_id: str | None
     waiting_for_agent: bool
 
@@ -103,6 +106,7 @@ class SREGymEnvironmentProvider:
     task_stages: tuple[str, ...]
     phase_probe: Callable[[str], Mapping[str, Any]] | None = None
     clock: Callable[[], str] = _utc_now
+    namespace: str = "hotel-reservation"
     provider_id: str = field(default="sregym.environment.v1", init=False)
     provider_type: str = field(default="environment_provider", init=False)
 
@@ -204,7 +208,18 @@ class SREGymEnvironmentProvider:
         )
 
     def reset(self, run_manifest: RunManifest) -> LifecycleOutcome:
-        return self._call("reset", run_manifest, lambda: _run(self.conductor.prepare_problem()))
+        def prepare() -> Any:
+            # Cleanup is host-controlled and Kubernetes namespace deletion is
+            # asynchronous.  Guard the upstream deployment boundary so a
+            # restarted attempt cannot create resources in a terminating
+            # application namespace.
+            kubectl = getattr(self.conductor, "kubectl", None)
+            api = getattr(kubectl, "core_v1_api", None)
+            if api is not None:
+                wait_for_namespace_recreation(api, self.namespace)
+            return _run(self.conductor.prepare_problem())
+
+        return self._call("reset", run_manifest, prepare)
 
     def inject_fault(self, run_manifest: RunManifest) -> LifecycleOutcome:
         return self._call("fault", run_manifest, self.conductor.inject_problem_fault)

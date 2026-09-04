@@ -24,6 +24,7 @@ from clawgym.contracts import sha256_digest
 from clawgym_overlay.deployment_lock import load_deployment_lock
 from clawgym_overlay.environment_qualification import TARGET
 from clawgym_overlay.locked_runtime import LockedRuntime
+from clawgym_overlay.namespace_lifecycle import wait_for_namespace_recreation
 
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 _REV = re.compile(r"^[0-9a-f]{40}$")
@@ -293,6 +294,12 @@ def run_qualification_trial(
     cleanup_ok = False
     cleanup_result: Mapping[str, Any] = {}
     try:
+        # A previous attempt may have deleted the application namespace just
+        # before this process started.  Wait for Kubernetes to finish that
+        # asynchronous deletion before SREGym recreates the application.
+        core_api = getattr(getattr(conductor, "kubectl", None), "core_v1_api", None)
+        if callable(getattr(core_api, "read_namespace", None)):
+            wait_for_namespace_recreation(cast(Any, core_api), _NAMESPACE)
         asyncio.run(conductor.prepare_problem())
         client: Any = importlib.import_module("kubernetes.client")
         networking = client.NetworkingV1Api()
