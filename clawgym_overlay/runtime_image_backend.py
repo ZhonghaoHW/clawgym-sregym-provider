@@ -134,7 +134,16 @@ class SubprocessRuntimeImageBackend:
             capture_output=True,
             text=True,
         )
-        if descriptor.returncode != 0 or descriptor.stdout.strip() != artifact["integrity"]:
+        observed_digest = descriptor.stdout.strip()
+        allowed_digests = {
+            str(artifact["integrity"]),
+            str(artifact.get("platform_integrity", artifact["integrity"])),
+        }
+        # A platform-constrained ``docker image save`` may expose the locked
+        # linux/amd64 child digest through ``docker image inspect`` instead of
+        # the multi-platform index digest.  Both are trusted only when they
+        # are explicitly present in the lock artifact.
+        if descriptor.returncode != 0 or observed_digest not in allowed_digests:
             return False
         # ``docker image save --platform`` imports the platform manifest into
         # containerd.  A multi-platform index digest (``integrity``) is not

@@ -143,6 +143,28 @@ def test_default_host_seeder_loads_and_tags_verified_image() -> None:
     ) in [command[-2:] for command in calls if command[0:3] == ("docker", "exec", "--privileged")]
 
 
+def test_default_host_seeder_accepts_locked_platform_descriptor() -> None:
+    index_digest = "sha256:" + "a" * 64
+    platform_digest = "sha256:" + "b" * 64
+    calls: list[tuple[str, ...]] = []
+
+    def runner(command: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        calls.append(command)
+        if command[0:3] == ("docker", "image", "inspect"):
+            return subprocess.CompletedProcess(command, 0, stdout=platform_digest)
+        return subprocess.CompletedProcess(command, 0)
+
+    backend = SubprocessRuntimeImageBackend(cluster_name="cluster", platform="linux/amd64", runner=runner)
+    assert backend.seed_host(
+        {"target": "image", "integrity": index_digest, "platform_integrity": platform_digest},
+        "registry/image",
+        ("cluster-control-plane",),
+    )
+    assert ("docker.io/library/image:latest", "registry/image@" + platform_digest) in [
+        command[-2:] for command in calls if command[0:3] == ("docker", "exec", "--privileged")
+    ]
+
+
 def test_image_reference_with_digest_is_deterministic() -> None:
     from clawgym_overlay.runtime_image_backend import _image_reference_with_digest
 
