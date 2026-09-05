@@ -332,6 +332,34 @@ def test_reference_adapter_requires_agent_validation_and_filtered_access() -> No
         adapter.invoke(run, object())
 
 
+def test_reference_adapter_captures_host_owned_mitigation_window() -> None:
+    captured: list[tuple[str, bool]] = []
+    adapter = SREGymReferenceAgentAdapter(
+        sha256_digest({"adapter": "reference"}),
+        lambda run, kubeconfig: ReferenceAgentExecution(
+            exit_code=0,
+            submission={"ok": True},
+            duration_ms=1,
+            transcript_digest="a" * 64,
+            image_digest="b" * 64,
+        ),
+        steady_state_probe=lambda: True,
+        telemetry_capture=lambda window, healthy: (
+            captured.append((window, healthy))
+            or {"window": window, "queries_succeeded": True, "service_healthy": healthy}
+        ),
+        clock=lambda: NOW,
+    )
+    result = adapter.invoke(
+        SimpleNamespace(lane="agent_validation", manifest_digest="a" * 64), _SREGymAccessHandle("k")
+    )
+
+    assert captured == [("mitigation", True)]
+    summary = result.outcome.evidence[0].document["summary"]
+    assert summary["mitigation_probe_healthy"] is True
+    assert summary["telemetry_window"]["window"] == "mitigation"
+
+
 def test_reference_runtime_revision_is_independent_from_retained_environment_release() -> None:
     verify_release_revisions(
         {"runtime_reference": {"kind": "source_revision", "reference": "a" * 40}},

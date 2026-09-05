@@ -49,6 +49,8 @@ class SREGymReferenceAgentAdapter:
 
     immutable_configuration_digest: str
     execute_stratus: Callable[[RunManifest, str], ReferenceAgentExecution]
+    steady_state_probe: Callable[[], bool] | None = None
+    telemetry_capture: Callable[[str, bool], Mapping[str, Any]] | None = None
     clock: Callable[[], str] = utc_now
     provider_id: str = field(default="sregym.reference-agent.v1", init=False)
     provider_type: str = field(default="agent_adapter", init=False)
@@ -61,6 +63,20 @@ class SREGymReferenceAgentAdapter:
         started_at = self.clock()
         started = time.monotonic()
         execution = self.execute_stratus(run_manifest, access_handle.kubeconfig_path)
+        # Reference-agent runs must contribute the same causal mitigation
+        # window as the no-model validation adapter.  Without this capture the
+        # observation provider cannot reconstruct baseline -> fault ->
+        # mitigation -> recovery and a fully repaired episode is rejected
+        # during terminal finalization.  The probe is host-owned; the agent
+        # cannot self-report health.
+        mitigation_healthy = (
+            bool(self.steady_state_probe()) if self.steady_state_probe is not None else execution.exit_code == 0
+        )
+        telemetry = (
+            dict(self.telemetry_capture("mitigation", mitigation_healthy))
+            if self.telemetry_capture is not None
+            else None
+        )
         duration_ms = max(execution.duration_ms, int((time.monotonic() - started) * 1000))
         completed_at = self.clock()
         status = "succeeded" if execution.exit_code == 0 else "failed"
@@ -73,6 +89,8 @@ class SREGymReferenceAgentAdapter:
             "transcript_sha256_digest": transcript_digest,
             "transcript_bytes": execution.transcript_bytes,
             "container_timeout_seconds": execution.timeout_seconds,
+            "mitigation_probe_healthy": mitigation_healthy,
+            "telemetry_window": telemetry,
         }
         evidence = [
             EvidencePayload(

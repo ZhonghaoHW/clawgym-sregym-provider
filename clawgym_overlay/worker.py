@@ -280,7 +280,14 @@ def execute(args: argparse.Namespace) -> None:
                     bridge, agent_release=release, manifest_root=root
                 ),
                 runner_factory=SafeStratusRunner,
-                adapter_factory=SREGymReferenceAgentAdapter,
+                adapter_factory=lambda digest, runner: SREGymReferenceAgentAdapter(
+                    digest,
+                    runner,
+                    steady_state_probe=lambda: bool(
+                        conductor.current_problem.mitigation_oracle._run_recommendation_probe()
+                    ),
+                    telemetry_capture=telemetry.capture,
+                ),
             ),
         )
     else:
