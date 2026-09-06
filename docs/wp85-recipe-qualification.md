@@ -21,10 +21,10 @@ automatically change the Catalog or active baseline.
 ## ECS observation (2026-09-06)
 
 The final Provider runner completed all eight workload and five observability
-trials on the four-node Kind cluster. The runner source fingerprint used on
-ECS is
-`bb54e14b300a0a43a251d00053aad8ae86ef31dbcac37fe36a455eff71feec91`, which
-matches the local WP8.5 working-tree file. Workload metrics stayed within the
+trials on the four-node Kind cluster. The release-backed runner is Provider
+commit `752f302ec1434a67eb8658409c2a57f69c39ad3f`; its source fingerprint is
+`bdfe7fb22ef49255090adf631a10eadff6db16306947485222287d1d0bb4002e`, which
+matches the committed remote runner. Workload metrics stayed within the
 fixed rate/error/saturation gates; observability retained the required signals
 with freshness, continuity and cardinality checks. Every selected trial ended
 with cleanup and no residue.
@@ -35,6 +35,6 @@ uses a bounded 60-second health wait and records the failed pre-fix attempt
 separately; the retry passed. This is an explicit runtime fix, not a hidden
 retry or a changed qualification threshold. The remote archive and signed
 evidence index are retained outside Git; no candidate resource or temporary
-lease remains on the cluster. The WP8.5 runner has not yet been committed as
-a new Provider revision, so the source-bound publication step remains distinct
-from the observed qualification result.
+lease remains on the cluster. The release-backed signed evidence index and
+13 selected trial receipts are retained outside Git; the single bounded retry
+is recorded separately and does not replace the failed attempt.
