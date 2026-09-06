@@ -54,6 +54,7 @@
     ".github/workflows/assurance-gate.yml",
     "docs/wp8.4-platform-gate.md",
     "docs/wp8.4a-assurance-hardening.md",
+    "docs/wp85-recipe-qualification.md",
     "quality_scope.v1.json",
     "schemas/agent_evolution.quality_scope.v1.schema.json",
     "tools/check_coverage.py",
