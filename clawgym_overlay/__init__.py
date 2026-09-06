@@ -23,6 +23,14 @@ from clawgym_overlay.platform_observation import (
     require_clean_observation,
 )
 from clawgym_overlay.provenance import ProviderProvenanceError, source_revision
+from clawgym_overlay.recipe_qualification_runner import (
+    RecipeQualificationBackend,
+    RecipeQualificationError,
+    SREGymRecipeQualificationBackend,
+    collect_fixed_observability_snapshot,
+    execute_recipe_trial,
+    run_recipe_qualification_trial,
+)
 from clawgym_overlay.release import (
     MANIFEST_FILENAMES,
     SREGymReleaseBuilder,
@@ -47,6 +55,12 @@ __all__ = [
     "SREGymEnvironmentQualificationBackend",
     "build_sregym_qualification_backend",
     "default_environment_control_profile",
+    "RecipeQualificationBackend",
+    "RecipeQualificationError",
+    "SREGymRecipeQualificationBackend",
+    "collect_fixed_observability_snapshot",
+    "execute_recipe_trial",
+    "run_recipe_qualification_trial",
     "PlatformObservationError",
     "build_platform_host_observation",
     "collect_platform_host_observation",
