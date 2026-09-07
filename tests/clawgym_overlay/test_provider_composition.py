@@ -469,6 +469,83 @@ def test_tool_access_rejects_failed_verification_and_wrong_handle() -> None:
         provider.revoke(run, grant)
 
 
+def test_tool_access_handle_exposes_only_ephemeral_child_environment() -> None:
+    conductor = FakeConductor()
+    run = SimpleNamespace(
+        manifest_digest="a" * 64,
+        agent_release=SimpleNamespace(agent_release_digest="b" * 64),
+        environment_release=SimpleNamespace(environment_release_digest="c" * 64),
+    )
+    provider = SREGymToolAccessProvider(
+        conductor,
+        "d" * 64,
+        ("mcp",),
+        ("get",),
+        ("kube-system",),
+        access_verifier=lambda _path: {"passed": True},
+        clock=lambda: NOW,
+    )
+
+    grant = provider.grant(run)
+
+    assert grant.handle.child_environment() == {"KUBECONFIG": "/tmp/ephemeral-provider-kubeconfig"}
+
+
+def test_tool_access_failure_always_stops_proxy_and_redacts_verifier_output() -> None:
+    conductor = FakeConductor()
+    run = SimpleNamespace(
+        manifest_digest="a" * 64,
+        agent_release=SimpleNamespace(agent_release_digest="b" * 64),
+        environment_release=SimpleNamespace(environment_release_digest="c" * 64),
+    )
+    provider = SREGymToolAccessProvider(
+        conductor,
+        "d" * 64,
+        ("mcp",),
+        ("get",),
+        ("kube-system",),
+        access_verifier=lambda _path: {
+            "passed": False,
+            "reason_code": "access_denied",
+            "kubeconfig_path": "/private/secret/kubeconfig",
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="host verification"):
+        provider.grant(run)
+
+    assert conductor.calls == ["tool_grant", "tool_revoke"]
+
+
+def test_tool_access_revoke_rejects_cross_run_grant_before_stopping_proxy() -> None:
+    conductor = FakeConductor()
+    run = SimpleNamespace(
+        manifest_digest="a" * 64,
+        agent_release=SimpleNamespace(agent_release_digest="b" * 64),
+        environment_release=SimpleNamespace(environment_release_digest="c" * 64),
+    )
+    provider = SREGymToolAccessProvider(
+        conductor,
+        "d" * 64,
+        ("mcp",),
+        ("get",),
+        ("kube-system",),
+        access_verifier=lambda _path: {"passed": True},
+        clock=lambda: NOW,
+    )
+    grant = provider.grant(run)
+    foreign_run = SimpleNamespace(
+        manifest_digest="e" * 64,
+        agent_release=run.agent_release,
+        environment_release=run.environment_release,
+    )
+
+    with pytest.raises(RuntimeError, match="bound to this provider and run"):
+        provider.revoke(foreign_run, grant)
+
+    assert conductor.calls == ["tool_grant"]
+
+
 def test_environment_validation_adapter_records_failed_delete_or_probe() -> None:
     run = SimpleNamespace(lane="environment_validation", manifest_digest="a" * 64)
     adapter = SREGymEnvironmentValidationAdapter(

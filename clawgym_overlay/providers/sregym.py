@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import time
@@ -21,6 +22,8 @@ from clawgym.providers import (
 )
 
 from clawgym_overlay.namespace_lifecycle import wait_for_namespace_recreation
+from clawgym_overlay.tool_grant import SREGymToolGrantDescriptor
+from clawgym_overlay.tool_grant import utc_now as grant_utc_now
 
 
 def _utc_now() -> str:
@@ -336,6 +339,12 @@ class SREGymOracleProvider:
 @dataclass(frozen=True, slots=True)
 class _SREGymAccessHandle:
     kubeconfig_path: str
+    public_grant: SREGymToolGrantDescriptor | None = None
+
+    def child_environment(self) -> dict[str, str]:
+        """Return only the ephemeral variable needed by a generic AgentAdapter."""
+
+        return {"KUBECONFIG": self.kubeconfig_path}
 
 
 # Public aliases used by the compatibility adapters; retain the underscored
@@ -352,40 +361,79 @@ class SREGymToolAccessProvider:
     capabilities: tuple[str, ...]
     denied_namespaces: tuple[str, ...]
     access_verifier: Callable[[str], Mapping[str, Any]] | None = None
+    grant_audience: str = "hotel-reservation"
+    grant_ttl_seconds: int = 3600
+    clock: Callable[[], str] = grant_utc_now
     provider_id: str = field(default="sregym.filtered-tools.v1", init=False)
     provider_type: str = field(default="tool_access_provider", init=False)
 
     def grant(self, run_manifest: RunManifest) -> ToolAccessGrant:
-        self.conductor.start_k8s_proxy()
-        path = self.conductor.get_agent_kubeconfig_path()
-        if not path:
-            raise RuntimeError("SREGym filtering proxy did not produce an access handle")
-        checks = self.access_verifier(path) if self.access_verifier is not None else {"passed": True}
-        if checks.get("passed") is not True:
-            self.conductor.stop_k8s_proxy()
-            raise RuntimeError("filtered Kubernetes access failed its host verification")
-        return ToolAccessGrant(
-            handle=_SREGymAccessHandle(path),
-            evidence=(
-                EvidencePayload(
-                    artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-tool-grant.json",
-                    document={
-                        "schema_id": "clawgym.sregym_tool_evidence.v1",
-                        "provider_id": self.provider_id,
-                        "status": "granted",
-                        "interfaces": list(self.interfaces),
-                        "capabilities": list(self.capabilities),
-                        "denied_namespaces": list(self.denied_namespaces),
-                        "access_checks": dict(checks),
-                    },
+        proxy_started = True
+        try:
+            self.conductor.start_k8s_proxy()
+            path = self.conductor.get_agent_kubeconfig_path()
+            if not isinstance(path, str) or not path:
+                raise RuntimeError("SREGym filtering proxy did not produce an access handle")
+            checks = (
+                self.access_verifier(path)
+                if self.access_verifier is not None
+                else {"passed": True}
+            )
+            if not isinstance(checks, Mapping) or checks.get("passed") is not True:
+                raise RuntimeError("filtered Kubernetes access failed its host verification")
+            public_grant = SREGymToolGrantDescriptor.issue(
+                run_manifest,
+                provider_id=self.provider_id,
+                capabilities=self.capabilities,
+                audience=self.grant_audience,
+                issued_at=self.clock(),
+                ttl_seconds=self.grant_ttl_seconds,
+                selector={
+                    "audience": self.grant_audience,
+                    "denied_namespaces": list(self.denied_namespaces),
+                },
+            )
+            safe_checks = {"passed": True}
+            reason_code = checks.get("reason_code")
+            if isinstance(reason_code, str) and reason_code.isidentifier():
+                safe_checks["reason_code"] = reason_code
+            return ToolAccessGrant(
+                handle=_SREGymAccessHandle(path, public_grant),
+                evidence=(
+                    EvidencePayload(
+                        artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-tool-grant.json",
+                        document={
+                            "schema_id": "clawgym.sregym_tool_evidence.v1",
+                            "provider_id": self.provider_id,
+                            "status": "granted",
+                            "interfaces": list(self.interfaces),
+                            "capabilities": list(self.capabilities),
+                            "denied_namespaces": list(self.denied_namespaces),
+                            "access_checks": safe_checks,
+                        },
+                    ),
+                    EvidencePayload(
+                        artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-tool-grant-public.json",
+                        document=public_grant.to_public_document(),
+                    ),
                 ),
-            ),
-        )
+            )
+        except Exception:
+            if proxy_started:
+                with contextlib.suppress(Exception):
+                    self.conductor.stop_k8s_proxy()
+            raise
 
     def revoke(self, run_manifest: RunManifest, grant: ToolAccessGrant) -> tuple[EvidencePayload, ...]:
         if not isinstance(grant.handle, _SREGymAccessHandle):
             raise RuntimeError("tool access handle was not issued by SREGym")
+        public_grant = grant.handle.public_grant
+        if public_grant is None:
+            raise RuntimeError("tool access handle has no public grant descriptor")
+        if public_grant.provider_id != self.provider_id or not public_grant.matches_run(run_manifest):
+            raise RuntimeError("tool access grant is not bound to this provider and run")
         self.conductor.stop_k8s_proxy()
+        revoked_grant = public_grant.revoked(self.clock())
         return (
             EvidencePayload(
                 artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-tool-revoke.json",
@@ -394,6 +442,10 @@ class SREGymToolAccessProvider:
                     "provider_id": self.provider_id,
                     "status": "revoked",
                 },
+            ),
+            EvidencePayload(
+                artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-tool-revoke-public.json",
+                document=revoked_grant.to_public_document(),
             ),
         )
 
