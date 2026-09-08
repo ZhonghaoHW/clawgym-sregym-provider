@@ -262,7 +262,7 @@ packages = [
 [tool.setuptools.package-data]
 atif_converter = ["README.md"]
 "atif_converter.atif" = ["UPSTREAM.md"]
-clawgym_overlay = ["manifests/*.json"]
+clawgym_overlay = ["manifests/*.json", "schemas/*.json"]
 
 [tool.uv.sources]
 geni-lib-xlab = { path = "scripts/geni_lib/mod/geni_lib_xlab-1.0.0.tar.gz" }

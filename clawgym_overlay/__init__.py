@@ -71,4 +71,12 @@ __all__ = [
     "verify_first_party_dependency_attestation",
     "write_attestation_exclusive",
     "write_sbom_exclusive",
+    "EnvironmentProjectionError",
+    "build_environment_projection",
+    "validate_environment_projection",
 ]
+from .projection import (
+    EnvironmentProjectionError,
+    build_environment_projection,
+    validate_environment_projection,
+)

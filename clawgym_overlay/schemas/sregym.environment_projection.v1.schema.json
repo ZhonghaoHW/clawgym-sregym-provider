@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clawgym.dev/schemas/sregym.environment_projection.v1.schema.json",
+  "title": "SREGym environment management projection v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "producer_repo", "producer_revision", "evidence_scope", "environment_release_digest", "provider_id", "readiness", "lifecycle_status", "tool_grants", "lease", "cleanup", "oracle_status", "evidence_digests", "projection_digest"],
+  "properties": {
+    "schema_id": {"const": "sregym.environment_projection.v1"},
+    "producer_repo": {"const": "clawgym-sregym-provider"},
+    "producer_revision": {"type": "string", "pattern": "^[0-9a-f]{40,64}$"},
+    "evidence_scope": {"enum": ["local_fake", "local_live_model", "live_episode"]},
+    "environment_release_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "provider_id": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,127}$"},
+    "readiness": {"enum": ["ready", "not_ready", "unknown"]},
+    "lifecycle_status": {"enum": ["idle", "reset", "faulted", "recovering", "cleaned", "failed", "unknown"]},
+    "tool_grants": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["grant_id", "grant_digest", "status"],
+        "properties": {
+          "grant_id": {"type": "string", "minLength": 1},
+          "grant_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "status": {"enum": ["granted", "revoked", "expired", "denied", "unknown"]}
+        }
+      }
+    },
+    "lease": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "lease_digest"],
+      "properties": {
+        "status": {"enum": ["not_acquired", "active", "expired", "released", "unknown"]},
+        "lease_digest": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "cleanup": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "evidence_digests"],
+      "properties": {
+        "status": {"enum": ["not_run", "succeeded", "failed", "unknown"]},
+        "evidence_digests": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "uniqueItems": true}
+      }
+    },
+    "oracle_status": {"enum": ["not_run", "stubbed", "available", "unknown"]},
+    "evidence_digests": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "uniqueItems": true},
+    "projection_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
