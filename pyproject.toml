@@ -4,7 +4,7 @@ requires-python = ">= 3.12"
 version = "0.0.1"
 
 dependencies = [
-    "clawgym @ git+https://github.com/ZhonghaoHW/clawgym.git@43ae0d923833a0e749da231392a08a386f68af05",
+    "clawgym @ git+https://github.com/ZhonghaoHW/clawgym.git@a24fe9fb0a037aebe0ef14d3ab4bdf19c36dcf59",
     "ansible>=11.8.0",
     "anthropic>=0.52.0",
     "anyio==4.9.0",

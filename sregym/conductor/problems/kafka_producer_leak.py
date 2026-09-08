@@ -1,8 +1,8 @@
+from sregym.conductor.oracles.kafka_producer_leak_mitigation import KafkaProducerLeakOracle
 from sregym.conductor.oracles.llm_as_a_judge.llm_as_a_judge_oracle import LLMAsAJudgeOracle
 from sregym.conductor.problems.base import Problem
 from sregym.generators.fault.inject_app import ApplicationFaultInjector
 from sregym.service.apps.astronomy_shop import AstronomyShop
-from sregym.conductor.oracles.kafka_producer_leak_mitigation import KafkaProducerLeakOracle
 from sregym.service.kubectl import KubeCtl
 from sregym.utils.decorators import mark_fault_injected
 

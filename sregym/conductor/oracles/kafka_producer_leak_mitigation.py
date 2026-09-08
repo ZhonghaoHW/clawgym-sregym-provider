@@ -1,6 +1,8 @@
-from sregym.conductor.oracles.mitigation import MitigationOracle
-from sregym.service.kubectl import KubeCtl, ApiException
 import time
+
+from sregym.conductor.oracles.mitigation import MitigationOracle
+from sregym.service.kubectl import ApiException, KubeCtl
+
 
 class KafkaProducerLeakOracle(MitigationOracle):
     def evaluate(self) -> dict:

@@ -10,15 +10,14 @@ availability category and evidence digests. It performs deterministic
 canonical hashing, rejects duplicate grants, unknown fields and conflicting
 identities, and does not import ClawGym or Evolution Lab code.
 
-Observed: `PYTHONPATH=.:/Users/elizhong/Documents/project/_wave3/clawgym
-/Users/elizhong/Documents/project/.venv/bin/pytest -q
-tests/clawgym_overlay/test_environment_projection.py` passed (`3 passed`);
-focused Ruff, compileall and `git diff --check` passed. The Provider full
-suite was attempted but collection stops because this machine image lacks the
-upstream `kubernetes` dependency. No ECS or live episode ran.
+Observed: with `PYTHONPATH` explicitly pointing to the published ClawGym
+reconciliation candidate `a24fe9fb0a037aebe0ef14d3ab4bdf19c36dcf59`, the
+Provider full suite passed (`985 passed, 1 skipped, 4 deselected`); focused
+Ruff, compileall and `git diff --check` also passed. No ECS or live episode
+ran.
 
 The generated Provider projection was also accepted by ClawGym's schema loader
 in a cross-repository local check; no Python implementation was imported from
-ClawGym or Evolution Lab. Repository-wide Ruff reports two pre-existing
-findings outside the Wave 3 projection files; the changed-file Ruff check is
-clean.
+ClawGym or Evolution Lab. The provider dependency and lockfile now pin the
+published ClawGym revision; the upstream-baseline manifest explicitly includes
+the already tracked `docs/wave3-local-projection-status.md` root change.
