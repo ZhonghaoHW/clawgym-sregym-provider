@@ -215,6 +215,106 @@ def test_real_provider_classes_close_an_in_memory_episode(tmp_path: Path) -> Non
     assert "agent_claimed_verdict" not in retained_text
 
 
+def test_reference_agent_uses_the_same_generic_lifecycle_controller(tmp_path: Path) -> None:
+    manifests = load_release_manifests(ROOT / "clawgym_overlay" / "manifests")
+    environment_release = build_environment_release(
+        overlay_revision="a" * 40,
+        manifests=manifests,
+    )
+    conductor = FakeConductor()
+    registry = ProviderRegistry()
+    bindings = register_sregym_providers(
+        registry,
+        conductor=conductor,
+        manifests=manifests,
+        snapshotter=lambda: {
+            source: {
+                "status": "empty",
+                "result_count": 0,
+                "summary_digest": sha256_digest({"source": source, "results": []}),
+            }
+            for source in ("prometheus", "loki", "jaeger")
+        },
+        phase_probe=lambda phase: {"passed": True, "phase": phase},
+        access_verifier=lambda path: {"passed": True, "filtered": True},
+    )
+    assert len(bindings) == 5
+    reference = SREGymReferenceAgentAdapter(
+        sha256_digest({"adapter": "reference-r0"}),
+        lambda run, kubeconfig: ReferenceAgentExecution(
+            exit_code=0,
+            submission={"action": "removed policy"},
+            duration_ms=12,
+            transcript_digest=sha256_digest({"run": run.manifest_digest, "transcript": "ok"}),
+            transcript_bytes=2,
+            transcript="ok",
+            image_digest="b" * 64,
+        ),
+        clock=lambda: NOW,
+    )
+    sink = BoundSink(tmp_path)
+    for implementation in (reference, sink):
+        registry.register_binding(
+            ProviderBinding(
+                ProviderDefinition(
+                    implementation.provider_id,
+                    implementation.provider_type,
+                    implementation.immutable_configuration_digest,
+                ),
+                implementation,
+            )
+        )
+
+    agent_release = AgentRelease.create(
+        adapter_id=reference.provider_id,
+        runtime_reference=RuntimeReference("source_revision", "c" * 40),
+        invocation_profile_digest=sha256_digest({"profile": "reference-r0"}),
+        tool_policy_profile_bundle_digest=sha256_digest({"tools": "filtered-sregym"}),
+    )
+    selections = ProviderSelections.from_dict(
+        {
+            "agent_adapter": reference.provider_id,
+            "environment_provider": "sregym.environment.v1",
+            "oracle_provider": "sregym.oracle.v1",
+            "tool_access_provider": "sregym.filtered-tools.v1",
+            "execution_backend": "sregym.container-execution.v1",
+            "observation_provider": "sregym.observation.v1",
+            "artifact_sink": sink.provider_id,
+        }
+    )
+    run = RunManifest.create(
+        run_id="reference-generic-lifecycle-run",
+        lane="agent_validation",
+        seed=11,
+        requested_at=NOW,
+        requested_start_at=NOW,
+        agent_release=agent_release,
+        environment_release=environment_release,
+        provider_selections=selections,
+        registry=registry,
+    )
+
+    episode = LifecycleController(registry, clock=lambda: NOW).run_episode(
+        episode_id="reference-generic-lifecycle-episode",
+        run_manifest=run,
+    )
+
+    assert episode.oracle_verdict.verdict == "pass"
+    assert episode.receipts["agent_invocation"].status == "succeeded"
+    assert conductor.calls == [
+        "reset",
+        "fault",
+        "tool_grant",
+        "oracle",
+        "recovery",
+        "tool_revoke",
+        "cleanup",
+    ]
+    assert any(path.name == "reference-agent-process.json" for path in tmp_path.rglob("*.json"))
+    retained_text = "\n".join(path.read_text() for path in tmp_path.rglob("*.json"))
+    assert "/tmp/ephemeral-provider-kubeconfig" not in retained_text
+
+
 def test_oracle_reports_error_when_required_host_result_is_missing() -> None:
     conductor = FakeConductor()
     conductor.waiting_for_agent = False
