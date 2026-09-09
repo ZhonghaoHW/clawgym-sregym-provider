@@ -67,3 +67,13 @@ its uninitialized upstream submodule state is pre-existing and preserved.
 The Provider remains a read-only validator for the open Wave 3 paired/live
 proposer and Wave 4 human-gated activation/rollback work; no product code is
 changed by this correction.
+
+## Current ClawGym consumer pin — 2026-09-09
+
+The Provider package and lockfile now pin the current published ClawGym
+mainline `204ffc1a2b51c11c15c3157387c61c55d507a2a3`. This supersedes the
+earlier `1ef5…` consumer pin; the older `c806…` and `1ef5…` entries above are
+historical checkpoints and must not be used as the next starting point. The
+pin-consistency regression, locked dependency resolution, focused Provider
+tests and the recursively initialized full suite were rerun against this
+revision. No SREGym upstream or Reference Agent behavior changed.
