@@ -160,6 +160,22 @@
         "tests/clawgym_overlay/test_prometheus_lifecycle.py"
       ],
       "sha256": "2ac3013dfd8f88923d44554b622b97874a152d8fd52b3f953c45bd3d58a59b70"
+    },
+    {
+      "path": "sregym/conductor/oracles/kafka_producer_leak_mitigation.py",
+      "rationale": "clawgym_overlay/docs/core-patches/0004-upstream-kafka-oracle-formatting.md",
+      "tests": [
+        "tests/clawgym_overlay/test_upstream_baseline.py"
+      ],
+      "sha256": "5c55ce2545d46ab5bfc0a7bd73887600c84c364928428d0e21d0e7de7c4db203"
+    },
+    {
+      "path": "sregym/conductor/problems/kafka_producer_leak.py",
+      "rationale": "clawgym_overlay/docs/core-patches/0004-upstream-kafka-oracle-formatting.md",
+      "tests": [
+        "tests/clawgym_overlay/test_upstream_baseline.py"
+      ],
+      "sha256": "314ac4ca009d9ae87641bdfcd1c9ca22f6bf3ec72131e3b0b069c17bd54f3292"
     }
   ]
 }
