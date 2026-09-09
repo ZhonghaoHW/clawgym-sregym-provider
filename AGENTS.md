@@ -1,5 +1,13 @@
 # ClawGym SREGym Provider Contributor Instructions
 
+## Cross-repository operating prompt
+
+Before changing this repository, read the persistent four-repository operating
+prompt at
+`/Users/elizhong/Documents/project/FOUR_REPO_SYSTEM_GUARDRAILS.md`. It is the
+shared system-level baseline for ClawGym, the SREGym Provider, Evolution Lab
+and ZeroClaw. This repository's rules refine it; they do not replace it.
+
 ## Status and authority
 
 This repository is the ClawGym-maintained provider fork of SREGym. The
