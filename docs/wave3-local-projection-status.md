@@ -56,3 +56,14 @@ This is a revision/consumer-alignment refresh only. The Provider continues to
 own SREGym upstream-derived environment behavior, ToolGrant, lease, lifecycle,
 Oracle, recovery and cleanup. It does not close the Wave 3 paired matrix or
 the Wave 4 proposer, human approval, activation, rollback or ECS gates.
+
+## Ledger correction: actual Provider base before this documentation commit — 2026-09-09
+
+The preceding historical checkpoints must not be used as the current base.
+The verified Provider revision before this ledger-only correction is
+`40a9991b88aef895918075c56cf3b8b75d0a9992` on `provider-main`, exactly equal
+to `origin/provider-main` and ancestor-checked. The base worktree is clean;
+its uninitialized upstream submodule state is pre-existing and preserved.
+The Provider remains a read-only validator for the open Wave 3 paired/live
+proposer and Wave 4 human-gated activation/rollback work; no product code is
+changed by this correction.
