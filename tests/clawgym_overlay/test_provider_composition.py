@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from clawgym.artifacts import FilesystemArtifactSink
+from clawgym.artifacts import FilesystemArtifactSink, RetainedArtifactSink, verify_retained_bundle
 from clawgym.contracts import (
     AgentRelease,
     ProviderSelections,
@@ -23,8 +23,11 @@ from clawgym.providers import (
     ProviderRegistry,
 )
 from clawgym.runtime import LifecycleController
+from clawgym.worker import execute_worker
 
 from clawgym_overlay.composition import register_sregym_providers
+from clawgym_overlay.materialized_profile import load_materialized_reference_profile
+from clawgym_overlay.materializer import materialize_reference_profile
 from clawgym_overlay.providers import (
     ReferenceAgentExecution,
     SREGymEnvironmentProvider,
@@ -37,6 +40,7 @@ from clawgym_overlay.providers import (
 from clawgym_overlay.providers.sregym import _SREGymAccessHandle
 from clawgym_overlay.release import build_environment_release, load_release_manifests
 from clawgym_overlay.worker import verify_release_revisions
+from clawgym_overlay.worker_profile import ReferenceAdapterDeps, build_reference_adapter
 
 ROOT = Path(__file__).resolve().parents[2]
 NOW = "2026-08-24T12:00:00Z"
@@ -313,6 +317,196 @@ def test_reference_agent_uses_the_same_generic_lifecycle_controller(tmp_path: Pa
     assert any(path.name == "reference-agent-process.json" for path in tmp_path.rglob("*.json"))
     retained_text = "\n".join(path.read_text() for path in tmp_path.rglob("*.json"))
     assert "/tmp/ephemeral-provider-kubeconfig" not in retained_text
+
+
+def test_materialized_reference_adapter_closes_through_retained_worker(tmp_path: Path) -> None:
+    """Prove materialization, adapter construction and the kernel worker share one path."""
+
+    def write_json(path: Path, document: dict[str, object]) -> None:
+        path.write_text(json.dumps(document, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+
+    manifests = load_release_manifests(ROOT / "clawgym_overlay" / "manifests")
+    environment_release = build_environment_release(
+        overlay_revision="a" * 40,
+        manifests=manifests,
+    )
+    parent = json.loads(
+        (ROOT / "clawgym_overlay" / "manifests" / "agent.reference-stratus-r1f.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    parent["agent_release_digest"] = "f" * 64
+    parent["tool_policy_profile_bundle_digest"] = sha256_digest({"tools": "filtered-sregym"})
+    bundle: dict[str, object] = {
+        "schema_id": "agent_evolution.reference_agent_component_bundle.v1",
+        "bundle_id": "local-reference-component",
+        "experimental_baseline_digest": "a" * 64,
+        "base_agent_release_digest": parent["agent_release_digest"],
+        "search_plan_digest": "b" * 64,
+        "train_partition_digest": "c" * 64,
+        "components": {
+            "diagnosis": {
+                "system": "Diagnose {app_name}",
+                "user": "Inspect {app_namespace}",
+                "summary": "Summarize",
+            },
+            "mitigation": {
+                "system": "Fix {app_name}",
+                "user": "Apply minimal fix {faults_info}",
+                "retry_user": "Retry {last_result} {reflection}",
+            },
+        },
+        "diagnosis_step_limit": 8,
+        "mitigation_step_limit": 8,
+    }
+    bundle["component_bundle_digest"] = sha256_digest(
+        {key: value for key, value in bundle.items() if key != "component_bundle_digest"}
+    )
+    proposal: dict[str, object] = {
+        "schema_id": "agent_evolution.agent_candidate_proposal.v1",
+        "candidate_id": "local-reference-candidate",
+        "experimental_baseline_digest": "a" * 64,
+        "frozen_control_agent_release_digest": "d" * 64,
+        "base_agent_release_digest": parent["agent_release_digest"],
+        "environment_release_digest": environment_release.environment_release_digest,
+        "search_plan_digest": "b" * 64,
+        "component_bundle_digest": bundle["component_bundle_digest"],
+        "source_train_episode_digests": ["e" * 64],
+        "parent_lineage": ["d" * 64, parent["agent_release_digest"]],
+        "change_class": "materializer_compatibility",
+    }
+    proposal["proposal_digest"] = sha256_digest(
+        {key: value for key, value in proposal.items() if key != "proposal_digest"}
+    )
+    proposal_path = tmp_path / "proposal.json"
+    bundle_path = tmp_path / "component-bundle.json"
+    parent_path = tmp_path / "parent-profile.json"
+    write_json(proposal_path, proposal)
+    write_json(bundle_path, bundle)
+    write_json(parent_path, parent)
+    materialized_root = tmp_path / "materialized"
+    materialize_reference_profile(
+        proposal_path=proposal_path,
+        component_bundle_path=bundle_path,
+        parent_profile_path=parent_path,
+        output_dir=materialized_root,
+        runtime_reference="b" * 40,
+    )
+    profile = load_materialized_reference_profile(materialized_root)
+
+    def fake_runner(**_kwargs: object):
+        def run(_run_manifest: RunManifest, _kubeconfig_path: str) -> ReferenceAgentExecution:
+            return ReferenceAgentExecution(
+                exit_code=0,
+                submission={"action": "removed policy"},
+                duration_ms=12,
+                transcript_digest=sha256_digest({"transcript": "ok"}),
+                transcript_bytes=2,
+                transcript="ok",
+                image_digest="b" * 64,
+            )
+
+        return run
+
+    adapter = build_reference_adapter(
+        agent_release={
+            "adapter_id": "sregym.reference-agent.v1",
+            "invocation_profile_digest": profile["profile_digest"],
+        },
+        manifest_root=ROOT / "clawgym_overlay" / "manifests",
+        materialization_bundle=materialized_root,
+        compatibility_bridge=None,
+        secret_file=str(tmp_path / "agent-secret"),
+        deps=ReferenceAdapterDeps(
+            load_materialized=lambda root: load_materialized_reference_profile(
+                root, profile_digest=profile["profile_digest"]
+            ),
+            load_legacy=lambda _root, _digest: pytest.fail("materialized path must not load legacy profiles"),
+            resolve_r0=lambda _bridge, _release, _root: pytest.fail("materialized path must not load R0"),
+            runner_factory=fake_runner,
+            adapter_factory=lambda digest, runner: SREGymReferenceAgentAdapter(
+                digest, runner, clock=lambda: NOW
+            ),
+        ),
+    )
+
+    conductor = FakeConductor()
+    registry = ProviderRegistry()
+    register_sregym_providers(
+        registry,
+        conductor=conductor,
+        manifests=manifests,
+        snapshotter=lambda: {
+            source: {
+                "status": "empty",
+                "result_count": 0,
+                "summary_digest": sha256_digest({"source": source, "results": []}),
+            }
+            for source in ("prometheus", "loki", "jaeger")
+        },
+        phase_probe=lambda phase: {"passed": True, "phase": phase},
+        access_verifier=lambda _path: {"passed": True, "filtered": True},
+    )
+    agent_release = AgentRelease.create(
+        adapter_id=adapter.provider_id,
+        runtime_reference=RuntimeReference("source_revision", "b" * 40),
+        invocation_profile_digest=profile["profile_digest"],
+        tool_policy_profile_bundle_digest=parent["tool_policy_profile_bundle_digest"],
+    )
+    evidence_root = tmp_path / "evidence"
+    evidence_root.mkdir()
+    sink = RetainedArtifactSink(
+        evidence_root,
+        "materialized-reference-worker-run",
+        provider_id="retained-reference",
+        immutable_configuration_digest=sha256_digest({"sink": "retained-reference"}),
+    )
+    for implementation in (adapter, sink):
+        registry.register_binding(
+            ProviderBinding(
+                ProviderDefinition(
+                    implementation.provider_id,
+                    implementation.provider_type,
+                    implementation.immutable_configuration_digest,
+                ),
+                implementation,
+            )
+        )
+    selections = ProviderSelections.from_dict(
+        {
+            "agent_adapter": adapter.provider_id,
+            "environment_provider": "sregym.environment.v1",
+            "oracle_provider": "sregym.oracle.v1",
+            "tool_access_provider": "sregym.filtered-tools.v1",
+            "execution_backend": "sregym.container-execution.v1",
+            "observation_provider": "sregym.observation.v1",
+            "artifact_sink": sink.provider_id,
+        }
+    )
+    run = RunManifest.create(
+        run_id="materialized-reference-worker-run",
+        lane="agent_validation",
+        seed=11,
+        requested_at=NOW,
+        requested_start_at=NOW,
+        agent_release=agent_release,
+        environment_release=environment_release,
+        provider_selections=selections,
+        registry=registry,
+    )
+
+    result = execute_worker(
+        episode_id="materialized-reference-worker-episode",
+        run_document=run.to_dict(),
+        agent_release_document=agent_release.to_dict(),
+        environment_release_document=environment_release.to_dict(),
+        registry=registry,
+    )
+    verified = verify_retained_bundle(result.bundle_root, registry=registry)
+
+    assert verified.episode.oracle_verdict.verdict == "pass"
+    assert verified.episode.receipts["agent_invocation"].status == "succeeded"
+    assert any(path.name == "reference-agent-process.json" for path in result.bundle_root.rglob("*.json"))
 
 
 def test_oracle_reports_error_when_required_host_result_is_missing() -> None:
