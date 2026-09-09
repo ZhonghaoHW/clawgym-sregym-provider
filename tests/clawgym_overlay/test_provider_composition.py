@@ -219,7 +219,13 @@ def test_real_provider_classes_close_an_in_memory_episode(tmp_path: Path) -> Non
     assert "agent_claimed_verdict" not in retained_text
 
 
-def test_reference_agent_uses_the_same_generic_lifecycle_controller(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("submission", "expected_status"),
+    [({"action": "removed policy"}, "succeeded"), (None, "failed")],
+)
+def test_reference_agent_uses_the_same_generic_lifecycle_controller(
+    tmp_path: Path, submission: object, expected_status: str
+) -> None:
     manifests = load_release_manifests(ROOT / "clawgym_overlay" / "manifests")
     environment_release = build_environment_release(
         overlay_revision="a" * 40,
@@ -247,7 +253,7 @@ def test_reference_agent_uses_the_same_generic_lifecycle_controller(tmp_path: Pa
         sha256_digest({"adapter": "reference-r0"}),
         lambda run, kubeconfig: ReferenceAgentExecution(
             exit_code=0,
-            submission={"action": "removed policy"},
+            submission=submission,
             duration_ms=12,
             transcript_digest=sha256_digest({"run": run.manifest_digest, "transcript": "ok"}),
             transcript_bytes=2,
@@ -303,17 +309,29 @@ def test_reference_agent_uses_the_same_generic_lifecycle_controller(tmp_path: Pa
         run_manifest=run,
     )
 
-    assert episode.oracle_verdict.verdict == "pass"
-    assert episode.receipts["agent_invocation"].status == "succeeded"
-    assert conductor.calls == [
-        "reset",
-        "fault",
-        "tool_grant",
-        "oracle",
-        "recovery",
-        "tool_revoke",
-        "cleanup",
-    ]
+    assert episode.receipts["agent_invocation"].status == expected_status
+    if expected_status == "succeeded":
+        assert episode.oracle_verdict.verdict == "pass"
+        assert conductor.calls == [
+            "reset",
+            "fault",
+            "tool_grant",
+            "oracle",
+            "recovery",
+            "tool_revoke",
+            "cleanup",
+        ]
+    else:
+        assert episode.oracle_verdict.verdict == "error"
+        assert conductor.calls == ["reset", "fault", "tool_grant", "recovery", "tool_revoke", "cleanup"]
+        assert any(
+            reference.artifact_key == "host/agent-invocation-empty-submission.json"
+            for reference in episode.receipts["agent_invocation"].evidence_refs
+        )
+        assert any(
+            reference.artifact_key == "host/oracle-blocked_by_invocation.json"
+            for reference in episode.receipts["oracle"].evidence_refs
+        )
     assert any(path.name == "reference-agent-process.json" for path in tmp_path.rglob("*.json"))
     retained_text = "\n".join(path.read_text() for path in tmp_path.rglob("*.json"))
     assert "/tmp/ephemeral-provider-kubeconfig" not in retained_text
