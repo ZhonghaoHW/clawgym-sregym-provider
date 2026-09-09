@@ -42,3 +42,17 @@ Reference adapter regression through the retained worker also passed: exit 0,
 `27 passed`. Ruff, compileall and `git diff --check` remained green. No
 Provider Wave 4 product change was required; the Provider remains the owner of
 SREGym lifecycle, ToolGrant, lease, cleanup and Oracle boundaries.
+
+## Current published base refresh — 2026-09-09
+
+The current Provider mainline is `88cd372cf670331a6ba09b0e9407e36f6c9e84e0`
+on `provider-main`, exactly matching `origin/provider-main` and passing the
+ancestor check. The base worktree is clean; its uninitialized submodule state
+is pre-existing checkout state. A separate recursively initialized worktree
+verified the locked Provider suite with `988 passed, 1 skipped, 4 deselected`,
+Ruff and `git diff --check` passing.
+
+This is a revision/consumer-alignment refresh only. The Provider continues to
+own SREGym upstream-derived environment behavior, ToolGrant, lease, lifecycle,
+Oracle, recovery and cleanup. It does not close the Wave 3 paired matrix or
+the Wave 4 proposer, human approval, activation, rollback or ECS gates.
