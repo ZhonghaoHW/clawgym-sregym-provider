@@ -35,7 +35,7 @@ changed.
 
 ## Reconciliation addendum (2026-09-09)
 
-The current published Provider head is `0498df19`. The full Provider suite was
+The current published Provider head is `7165dd0e`. The full Provider suite was
 re-run in the declared dependency environment with recursive submodules
 initialized: exit 0, `987 passed, 1 skipped, 4 deselected`. The materialized
 Reference adapter regression through the retained worker also passed: exit 0,
