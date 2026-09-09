@@ -77,3 +77,20 @@ historical checkpoints and must not be used as the next starting point. The
 pin-consistency regression, locked dependency resolution, focused Provider
 tests and the recursively initialized full suite were rerun against this
 revision. No SREGym upstream or Reference Agent behavior changed.
+
+## Current ClawGym consumer pin — 2026-09-10
+
+The Provider package and `uv.lock` now pin the published ClawGym mainline
+`23557eb4bf5090bfc94dfa5995879ac6f4ae38df`. A clean disposable Provider
+environment created from this pin loads ClawGym from the locked Git source;
+it no longer relies on an older globally installed ClawGym package or a
+manual `PYTHONPATH` override. The pin-consistency test and the Reference
+composition focused suite passed (`29 passed`).
+
+After recursive initialization of the pinned `SREGym-applications` submodules,
+the full Provider suite passed `989 passed, 1 skipped, 4 deselected`. The
+submodule initialization was performed only in the disposable verification
+worktree; the original Provider checkout remains untouched. This is a
+consumer-version alignment change so the published empty-submission boundary
+is actually exercised by the Reference lifecycle; no SREGym upstream code or
+Oracle semantics changed.
