@@ -26,6 +26,15 @@ jobs:
           fetch-depth: 0
           submodules: recursive
       - uses: astral-sh/setup-uv@v5
+      - name: Configure private ClawGym dependency access
+        env:
+          CLAWGYM_READ_TOKEN: ${{ secrets.CLAWGYM_READ_TOKEN }}
+        run: |
+          if [ -z "$CLAWGYM_READ_TOKEN" ]; then
+            echo "::error::The CLAWGYM_READ_TOKEN repository secret is required to resolve the private ClawGym Git dependency."
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${CLAWGYM_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
       - run: uv sync --locked
       - run: uv run python tools/check_lockfile_hygiene.py uv.lock
       - run: uv run pytest
@@ -48,6 +57,15 @@ jobs:
           fetch-depth: 0
           submodules: recursive
       - uses: astral-sh/setup-uv@v5
+      - name: Configure private ClawGym dependency access
+        env:
+          CLAWGYM_READ_TOKEN: ${{ secrets.CLAWGYM_READ_TOKEN }}
+        run: |
+          if [ -z "$CLAWGYM_READ_TOKEN" ]; then
+            echo "::error::The CLAWGYM_READ_TOKEN repository secret is required to resolve the private ClawGym Git dependency."
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${CLAWGYM_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
       - run: uv sync --locked
       - run: uv run pytest --collect-only -q
       - run: uv run python tools/check_quality_scope.py --scope quality_scope.v1.json --root .
