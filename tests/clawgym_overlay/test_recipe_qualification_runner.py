@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -8,9 +9,14 @@ from clawgym.contracts import sha256_digest
 from clawgym_overlay.recipe_qualification_runner import (
     RecipeQualificationError,
     SREGymRecipeQualificationBackend,
+    _call,
+    _metrics,
+    _state,
     collect_fixed_observability_snapshot,
     execute_recipe_trial,
     run_recipe_qualification_trial,
+    validate_component,
+    validate_recipe_trial,
 )
 
 
@@ -372,3 +378,291 @@ def test_cleaned_observation_uses_namespace_absence_instead_of_deleted_service()
     )()
     observation = SREGymRecipeQualificationBackend(conductor).observe("cleaned", "workload")
     assert observation == {"target_path_healthy": True, "non_target_healthy": False, "oracle": "pass"}
+
+
+def test_backend_rejects_missing_problem_oracle_and_node_api() -> None:
+    backend = SREGymRecipeQualificationBackend(type("Conductor", (), {})())
+    with pytest.raises(RecipeQualificationError, match="not prepared"):
+        backend._app()
+
+    class Problem:
+        app = object()
+
+    class Conductor:
+        current_problem = Problem()
+
+    backend = SREGymRecipeQualificationBackend(Conductor())
+    with pytest.raises(RecipeQualificationError, match="oracle is unavailable"):
+        backend.observe("baseline", "workload")
+    assert backend._node_ready() is False
+
+
+def test_backend_health_wait_and_cleanup_boundaries() -> None:
+    class Oracle:
+        def _run_recommendation_probe(self):
+            return True
+
+    class App:
+        mitigation_oracle = Oracle()
+        namespace = "app"
+
+    class Problem:
+        app = App()
+
+    class Conductor:
+        current_problem = Problem()
+
+        def cleanup_problem(self):
+            return {"status": "not-cleaned"}
+
+    backend = SREGymRecipeQualificationBackend(Conductor(), health_timeout_seconds=0)
+    assert backend.observe("baseline", "workload")["oracle"] == "pass"
+    with pytest.raises(RecipeQualificationError, match="wait bound"):
+        SREGymRecipeQualificationBackend(Conductor(), health_timeout_seconds=True).observe("baseline", "workload")
+    assert backend.cleanup() == {"cleanup": False, "residue_absent": False}
+
+
+def test_backend_rejects_missing_hooks_and_unsafe_telemetry() -> None:
+    class Problem:
+        app = object()
+
+    class Conductor:
+        current_problem = Problem()
+
+    backend = SREGymRecipeQualificationBackend(Conductor())
+    with pytest.raises(RecipeQualificationError, match="workload hooks"):
+        backend.configure({"rate": 1}, "workload")
+    with pytest.raises(RecipeQualificationError, match="telemetry collector"):
+        backend.configure({}, "fault")
+
+    class BadTelemetry(SREGymRecipeQualificationBackend):
+        def _app(self):
+            return object()
+
+    backend = BadTelemetry(Conductor(), telemetry_snapshot=lambda profile: [])
+    with pytest.raises(RecipeQualificationError, match="unsafe payload"):
+        backend.configure({}, "fault")
+    with pytest.raises(RecipeQualificationError, match="stop hook"):
+        backend.recover({}, "workload")
+
+
+def test_backend_cleanup_and_async_hook_paths() -> None:
+    class App:
+        namespace = "app"
+
+    class Problem:
+        app = App()
+
+    class Conductor:
+        current_problem = Problem()
+
+        async def prepare_problem(self):
+            return {"status": "prepared"}
+
+        async def cleanup_problem(self):
+            return {"status": "cleaned"}
+
+    backend = SREGymRecipeQualificationBackend(Conductor())
+    assert backend.reset() == {"status": "prepared"}
+    assert backend.cleanup() == {"cleanup": True, "residue_absent": True}
+    assert _call(asyncio.sleep(0)) is None
+
+    async def inside_loop() -> None:
+        pending = asyncio.sleep(0)
+        with pytest.raises(RecipeQualificationError, match="synchronous host"):
+            _call(pending)
+        pending.close()
+
+    asyncio.run(inside_loop())
+
+
+def test_observability_collector_rejects_invalid_profile() -> None:
+    with pytest.raises(RecipeQualificationError, match="capture profile"):
+        collect_fixed_observability_snapshot(object(), {"sample_interval_seconds": 0, "capture_window_seconds": 1})
+    with pytest.raises(RecipeQualificationError, match="capture profile"):
+        collect_fixed_observability_snapshot(object(), {"sample_interval_seconds": True, "capture_window_seconds": 1})
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda trial: trial.update({"unexpected": True}), "unknown input"),
+        (lambda trial: trial.update({"schema_id": "wrong"}), "schema mismatch"),
+        (lambda trial: trial.update({"recipe_family": "fault"}), "allowlisted"),
+        (lambda trial: trial.update({"variant": "missing"}), "allowlisted"),
+        (lambda trial: trial.update({"trial_id": "not-the-expected-trial"}), "scope or role"),
+        (lambda trial: trial.update({"release_role": "candidate"}), "scope or role"),
+        (lambda trial: trial.update({"partition": "train"}), "scope or role"),
+        (lambda trial: trial.update({"seed": -1}), "scope or role"),
+        (lambda trial: trial.update({"seed": True}), "scope or role"),
+        (lambda trial: trial.update({"attempt_id": "../escape"}), "identity"),
+        (lambda trial: trial.update({"profile_digest": "bad"}), "profile digest"),
+    ],
+)
+def test_validate_recipe_trial_rejects_each_boundary(mutation, message) -> None:
+    trial = _trial()
+    mutation(trial)
+    with pytest.raises(RecipeQualificationError, match=message):
+        validate_recipe_trial(trial)
+
+
+def test_validate_recipe_trial_accepts_all_fixed_variants() -> None:
+    for family, variants in (
+        ("workload", ("baseline", "low", "high")),
+        ("observability", ("standard", "high_frequency")),
+    ):
+        for variant in variants:
+            validate_recipe_trial(_trial(family, variant))
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda component: component.update({"schema_id": "wrong"}), "schema mismatch"),
+        (lambda component: component.pop("component_bundle_digest"), "inventory is not exact"),
+        (lambda component: component.update({"component_bundle_digest": "bad"}), "bundle digest"),
+        (lambda component: component.update({"receipt_digest": "bad"}), "receipt digest"),
+        (lambda component: component["component"].update({"schema_id": "wrong"}), "document schema"),
+        (lambda component: component["component"].pop("profile"), "inventory is not exact"),
+        (lambda component: component["component"].update({"family": "fault"}), "family/variant"),
+        (lambda component: component["component"].update({"candidate_component_digest": "bad"}), "digest"),
+        (lambda component: component.update({"component_digest": "bad"}), "digest"),
+        (lambda component: component["component"].update({"base_component_digest": "bad"}), "base digest"),
+        (lambda component: component["component"].update({"target_resource": "other"}), "target boundary"),
+        (lambda component: component["component"].update({"profile": []}), "static registry"),
+        (lambda component: component["component"]["profile"].update({"rate": True}), "static registry"),
+    ],
+)
+def test_validate_component_rejects_each_boundary(mutation, message) -> None:
+    component = _component()
+    mutation(component)
+    if component.get("component_bundle_digest") != "bad" and "component_bundle_digest" in component:
+        component["component_bundle_digest"] = sha256_digest(
+            {key: value for key, value in component.items() if key != "component_bundle_digest"}
+        )
+    with pytest.raises(RecipeQualificationError, match=message):
+        validate_component(component, _trial())
+
+
+def test_validate_component_accepts_unwrapped_component_document() -> None:
+    bundle = _component()
+    validate_component(bundle["component"], _trial())
+
+
+@pytest.mark.parametrize(
+    ("family", "values", "message"),
+    [
+        (
+            "workload",
+            {
+                "requested_rate": "100",
+                "achieved_rate": 100,
+                "error_rate": 0.01,
+                "request_count": 1,
+                "success_count": 1,
+                "saturation_protection": True,
+            },
+            "metrics",
+        ),
+        (
+            "workload",
+            {
+                "requested_rate": 100,
+                "achieved_rate": 100,
+                "error_rate": 0.01,
+                "request_count": -1,
+                "success_count": 0,
+                "saturation_protection": True,
+            },
+            "counts",
+        ),
+        (
+            "workload",
+            {
+                "requested_rate": 100,
+                "achieved_rate": 10,
+                "error_rate": 0.01,
+                "request_count": 1,
+                "success_count": 1,
+                "saturation_protection": True,
+            },
+            "outside",
+        ),
+        (
+            "observability",
+            {
+                "required_signals": [],
+                "samples": 1,
+                "freshness_ok": True,
+                "signal_continuity": True,
+                "cardinality_ok": True,
+                "capture_window_seconds": 1,
+                "sample_interval_seconds": 1,
+            },
+            "signal set",
+        ),
+        (
+            "observability",
+            {
+                "required_signals": ["prometheus"],
+                "samples": 0,
+                "freshness_ok": True,
+                "signal_continuity": True,
+                "cardinality_ok": True,
+                "capture_window_seconds": 1,
+                "sample_interval_seconds": 1,
+            },
+            "samples",
+        ),
+        (
+            "observability",
+            {
+                "required_signals": ["prometheus"],
+                "samples": 1,
+                "freshness_ok": True,
+                "signal_continuity": True,
+                "cardinality_ok": True,
+                "capture_window_seconds": 0,
+                "sample_interval_seconds": 1,
+            },
+            "capture bounds",
+        ),
+        (
+            "observability",
+            {
+                "required_signals": ["prometheus"],
+                "samples": 1,
+                "freshness_ok": False,
+                "signal_continuity": True,
+                "cardinality_ok": True,
+                "capture_window_seconds": 1,
+                "sample_interval_seconds": 1,
+            },
+            "signal gates",
+        ),
+    ],
+)
+def test_metrics_rejects_unqualified_values(family, values, message) -> None:
+    with pytest.raises(RecipeQualificationError, match=message):
+        _metrics(family, values)
+
+
+def test_state_rejects_unknown_state_and_unsafe_observation() -> None:
+    with pytest.raises(RecipeQualificationError, match="lifecycle state"):
+        _state("unknown", {"target_path_healthy": True, "non_target_healthy": True, "oracle": "pass"})
+    with pytest.raises(RecipeQualificationError, match="safe typed"):
+        _state("baseline", {"target_path_healthy": "yes", "non_target_healthy": True, "oracle": "pass"})
+
+
+def test_execution_preserves_primary_error_and_reports_cleanup_failure() -> None:
+    trial = _trial()
+
+    class BrokenBackend(FakeBackend):
+        def reset(self):
+            raise RuntimeError("primary failure")
+
+        def cleanup(self):
+            raise RuntimeError("cleanup failure")
+
+    with pytest.raises(RecipeQualificationError, match="execution and cleanup failed"):
+        execute_recipe_trial(trial, _component(), BrokenBackend("workload"))

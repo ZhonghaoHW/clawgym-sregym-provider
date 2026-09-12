@@ -24,6 +24,9 @@
     "clawgym_overlay/r1f_protocol.py",
     "clawgym_overlay/reference_driver_r1f.py",
     "clawgym_overlay/materialized_profile.py",
+    "clawgym_overlay/namespace_lifecycle.py",
+    "clawgym_overlay/projection.py",
+    "clawgym_overlay/recipe_qualification_runner.py",
     "clawgym_overlay/reference_runner.py",
     "clawgym_overlay/release.py",
     "clawgym_overlay/validation_profiles.py",
@@ -31,7 +34,8 @@
     "clawgym_overlay/worker_admission.py",
     "clawgym_overlay/worker_profile.py",
     "clawgym_overlay/worker_runtime.py",
-    "clawgym_overlay/runtime_image_backend.py"
+    "clawgym_overlay/runtime_image_backend.py",
+    "clawgym_overlay/tool_grant.py"
   ],
   "frozen_compatibility_files": [
     "clawgym_overlay/reference_driver.py",

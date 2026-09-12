@@ -10,6 +10,7 @@ from typing import Any
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REVISION = re.compile(r"^[0-9a-f]{40,64}$")
+_IDENTIFIER = re.compile(r"^[a-z][a-z0-9._-]{0,127}$")
 _SCHEMA_ID = "sregym.environment_projection.v1"
 
 
@@ -37,6 +38,12 @@ def _require_revision(value: Any, field: str) -> str:
     return value
 
 
+def _require_identifier(value: Any, field: str) -> str:
+    if not isinstance(value, str) or _IDENTIFIER.fullmatch(value) is None:
+        raise EnvironmentProjectionError(f"{field} must be a lowercase identifier")
+    return value
+
+
 def _finish(document: dict[str, Any]) -> dict[str, Any]:
     document["projection_digest"] = _digest(document)
     return document
@@ -44,15 +51,31 @@ def _finish(document: dict[str, Any]) -> dict[str, Any]:
 
 def validate_environment_projection(document: Mapping[str, Any]) -> None:
     expected = {
-        "schema_id", "producer_repo", "producer_revision", "evidence_scope",
-        "environment_release_digest", "provider_id", "readiness", "lifecycle_status",
-        "tool_grants", "lease", "cleanup", "oracle_status", "evidence_digests", "projection_digest",
+        "schema_id",
+        "producer_repo",
+        "producer_revision",
+        "evidence_scope",
+        "environment_release_digest",
+        "provider_id",
+        "readiness",
+        "lifecycle_status",
+        "tool_grants",
+        "lease",
+        "cleanup",
+        "oracle_status",
+        "evidence_digests",
+        "projection_digest",
     }
-    if set(document) != expected or document.get("schema_id") != _SCHEMA_ID or document.get("producer_repo") != "clawgym-sregym-provider":
+    if (
+        set(document) != expected
+        or document.get("schema_id") != _SCHEMA_ID
+        or document.get("producer_repo") != "clawgym-sregym-provider"
+    ):
         raise EnvironmentProjectionError("environment projection fields or identity are invalid")
     _require_revision(document["producer_revision"], "producer_revision")
     _require_digest(document["environment_release_digest"], "environment_release_digest")
     _require_digest(document["projection_digest"], "projection_digest")
+    _require_identifier(document["provider_id"], "provider_id")
     if document["evidence_scope"] not in {"local_fake", "local_live_model", "live_episode"}:
         raise EnvironmentProjectionError("invalid evidence_scope")
     if document["readiness"] not in {"ready", "not_ready", "unknown"}:
@@ -61,7 +84,9 @@ def validate_environment_projection(document: Mapping[str, Any]) -> None:
         raise EnvironmentProjectionError("invalid lifecycle_status")
     if document["oracle_status"] not in {"not_run", "stubbed", "available", "unknown"}:
         raise EnvironmentProjectionError("invalid oracle_status")
-    if document["projection_digest"] != _digest({key: value for key, value in document.items() if key != "projection_digest"}):
+    if document["projection_digest"] != _digest(
+        {key: value for key, value in document.items() if key != "projection_digest"}
+    ):
         raise EnvironmentProjectionError("projection_digest does not match canonical content")
     seen_grants: set[str] = set()
     for grant in document["tool_grants"]:
@@ -118,7 +143,7 @@ def build_environment_projection(
         "producer_revision": _require_revision(producer_revision, "producer_revision"),
         "evidence_scope": evidence_scope,
         "environment_release_digest": _require_digest(environment_release_digest, "environment_release_digest"),
-        "provider_id": provider_id,
+        "provider_id": _require_identifier(provider_id, "provider_id"),
         "readiness": readiness,
         "lifecycle_status": lifecycle_status,
         "tool_grants": grants,

@@ -360,7 +360,7 @@ class SREGymToolAccessProvider:
     interfaces: tuple[str, ...]
     capabilities: tuple[str, ...]
     denied_namespaces: tuple[str, ...]
-    access_verifier: Callable[[str], Mapping[str, Any]] | None = None
+    access_verifier: Callable[[str], object] | None = None
     grant_audience: str = "hotel-reservation"
     grant_ttl_seconds: int = 3600
     clock: Callable[[], str] = grant_utc_now
@@ -374,12 +374,11 @@ class SREGymToolAccessProvider:
             path = self.conductor.get_agent_kubeconfig_path()
             if not isinstance(path, str) or not path:
                 raise RuntimeError("SREGym filtering proxy did not produce an access handle")
-            checks = (
-                self.access_verifier(path)
-                if self.access_verifier is not None
-                else {"passed": True}
-            )
-            if not isinstance(checks, Mapping) or checks.get("passed") is not True:
+            checks = self.access_verifier(path) if self.access_verifier is not None else {"passed": True}
+            if not isinstance(checks, Mapping):
+                raise RuntimeError("filtered Kubernetes access verification returned an invalid result")
+            checks_mapping = cast(Mapping[str, Any], checks)
+            if checks_mapping.get("passed") is not True:
                 raise RuntimeError("filtered Kubernetes access failed its host verification")
             public_grant = SREGymToolGrantDescriptor.issue(
                 run_manifest,
@@ -393,8 +392,8 @@ class SREGymToolAccessProvider:
                     "denied_namespaces": list(self.denied_namespaces),
                 },
             )
-            safe_checks = {"passed": True}
-            reason_code = checks.get("reason_code")
+            safe_checks: dict[str, bool | str] = {"passed": True}
+            reason_code = checks_mapping.get("reason_code")
             if isinstance(reason_code, str) and reason_code.isidentifier():
                 safe_checks["reason_code"] = reason_code
             return ToolAccessGrant(

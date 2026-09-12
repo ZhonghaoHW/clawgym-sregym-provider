@@ -349,9 +349,7 @@ def test_materialized_reference_adapter_closes_through_retained_worker(tmp_path:
         manifests=manifests,
     )
     parent = json.loads(
-        (ROOT / "clawgym_overlay" / "manifests" / "agent.reference-stratus-r1f.v1.json").read_text(
-            encoding="utf-8"
-        )
+        (ROOT / "clawgym_overlay" / "manifests" / "agent.reference-stratus-r1f.v1.json").read_text(encoding="utf-8")
     )
     parent["agent_release_digest"] = "f" * 64
     parent["tool_policy_profile_bundle_digest"] = sha256_digest({"tools": "filtered-sregym"})
@@ -442,9 +440,7 @@ def test_materialized_reference_adapter_closes_through_retained_worker(tmp_path:
             load_legacy=lambda _root, _digest: pytest.fail("materialized path must not load legacy profiles"),
             resolve_r0=lambda _bridge, _release, _root: pytest.fail("materialized path must not load R0"),
             runner_factory=fake_runner,
-            adapter_factory=lambda digest, runner: SREGymReferenceAgentAdapter(
-                digest, runner, clock=lambda: NOW
-            ),
+            adapter_factory=lambda digest, runner: SREGymReferenceAgentAdapter(digest, runner, clock=lambda: NOW),
         ),
     )
 
@@ -779,6 +775,17 @@ def test_tool_access_rejects_failed_verification_and_wrong_handle() -> None:
     grant = SimpleNamespace(handle=object())
     with pytest.raises(RuntimeError, match="handle"):
         provider.revoke(run, grant)
+
+    invalid_verifier = SREGymToolAccessProvider(
+        conductor,
+        "b" * 64,
+        ("read",),
+        ("get",),
+        ("kube-system",),
+        access_verifier=lambda _path: [],
+    )
+    with pytest.raises(RuntimeError, match="invalid result"):
+        invalid_verifier.grant(run)
 
 
 def test_tool_access_handle_exposes_only_ephemeral_child_environment() -> None:

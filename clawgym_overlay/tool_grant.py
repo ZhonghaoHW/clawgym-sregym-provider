@@ -11,7 +11,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from clawgym.contracts import RunManifest, sha256_digest
 
@@ -25,7 +25,7 @@ def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _parse_timestamp(value: str, field: str) -> datetime:
+def _parse_timestamp(value: object, field: str) -> datetime:
     if not isinstance(value, str):
         raise ValueError(f"{field} must be a UTC timestamp")
     try:
@@ -57,12 +57,6 @@ def _capabilities(values: tuple[str, ...]) -> tuple[str, ...]:
     return values
 
 
-def _digest_without(document: Mapping[str, Any], field: str) -> str:
-    payload = dict(document)
-    payload.pop(field, None)
-    return sha256_digest(payload)
-
-
 @dataclass(frozen=True, slots=True)
 class SREGymToolGrantDescriptor:
     """The public ``clawgym.tool_grant.v1`` projection of one grant."""
@@ -89,15 +83,13 @@ class SREGymToolGrantDescriptor:
         capabilities: tuple[str, ...],
         audience: str,
         issued_at: str,
-        ttl_seconds: int,
-        selector: Mapping[str, Any],
+        ttl_seconds: object,
+        selector: object,
     ) -> SREGymToolGrantDescriptor:
         run_digest = _digest(getattr(run_manifest, "manifest_digest", None), "run_manifest_digest")
         agent_release = getattr(run_manifest, "agent_release", None)
         environment_release = getattr(run_manifest, "environment_release", None)
-        agent_digest = _digest(
-            getattr(agent_release, "agent_release_digest", None), "agent_release_digest"
-        )
+        agent_digest = _digest(getattr(agent_release, "agent_release_digest", None), "agent_release_digest")
         environment_digest = _digest(
             getattr(environment_release, "environment_release_digest", None),
             "environment_release_digest",
@@ -112,10 +104,11 @@ class SREGymToolGrantDescriptor:
         if not 1 <= ttl_seconds <= _MAX_TTL_SECONDS:
             raise ValueError("tool grant TTL is outside the bounded range")
         issued = _parse_timestamp(issued_at, "issued_at")
+        selector_mapping = cast(Mapping[str, Any], selector)
         scope = {
             "kind": "namespace",
             "audience": audience,
-            "selector_digest": sha256_digest(dict(selector)),
+            "selector_digest": sha256_digest(dict(selector_mapping)),
         }
         descriptor = cls(
             grant_id=f"grant-{run_digest[:24]}",
@@ -126,9 +119,7 @@ class SREGymToolGrantDescriptor:
             capabilities=capabilities,
             scope=scope,
             issued_at=issued_at,
-            expires_at=(issued + timedelta(seconds=ttl_seconds)).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            ),
+            expires_at=(issued + timedelta(seconds=ttl_seconds)).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
         return descriptor._with_digest()
 
@@ -154,6 +145,8 @@ class SREGymToolGrantDescriptor:
         if self.status == "granted" and self.revoked_at is not None:
             raise ValueError("granted tool grant cannot have revoked_at")
         if self.status == "revoked":
+            if self.revoked_at is None:
+                raise ValueError("revoked tool grant requires revoked_at")
             _parse_timestamp(self.revoked_at, "revoked_at")
         if self.grant_digest:
             _digest(self.grant_digest, "grant_digest")

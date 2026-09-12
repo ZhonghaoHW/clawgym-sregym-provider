@@ -198,7 +198,8 @@ def test_cluster_inventory_accepts_kind_bundled_kube_proxy_tag(tmp_path) -> None
     status = SimpleNamespace(name="kube-proxy", image_id="sha256:" + "f" * 64)
     pod = SimpleNamespace(
         spec=SimpleNamespace(
-            init_containers=[], containers=[SimpleNamespace(name="kube-proxy", image="registry.k8s.io/kube-proxy:v1.35.0")]
+            init_containers=[],
+            containers=[SimpleNamespace(name="kube-proxy", image="registry.k8s.io/kube-proxy:v1.35.0")],
         ),
         status=SimpleNamespace(init_container_statuses=[], container_statuses=[status]),
     )

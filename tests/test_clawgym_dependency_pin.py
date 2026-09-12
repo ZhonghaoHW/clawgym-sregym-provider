@@ -3,9 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_CLAWGYM_REVISION = re.compile(
-    r'"clawgym\s+@\s+git\+https://github\.com/ZhonghaoHW/clawgym\.git@([0-9a-f]{40,64})"'
-)
+_CLAWGYM_REVISION = re.compile(r'"clawgym\s+@\s+git\+https://github\.com/ZhonghaoHW/clawgym\.git@([0-9a-f]{40,64})"')
 _LOCKED_CLAWGYM_REVISION = re.compile(
     r'source = \{ git = "https://github\.com/ZhonghaoHW/clawgym\.git\?rev=([0-9a-f]{40,64})#([0-9a-f]{40,64})" \}'
 )
