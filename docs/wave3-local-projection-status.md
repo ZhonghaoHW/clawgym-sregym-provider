@@ -1,7 +1,33 @@
 # Wave 3 local projection status
 
 **Last verified:** 2026-09-08
-**State:** `IN_PROGRESS_LOCAL_ONLY`
+**State:** `PUBLISHED_PRE_ECS_QUALITY_BASELINE_FINAL_REQUALIFICATION_PENDING`
+
+## Published pre-ECS quality baseline — 2026-09-13
+
+Provider `provider-main` now contains published quality slice
+`3d614bfb8b6a2d10477925f33a4a4bcfe2364faf`. The active ClawGym overlay owns
+the stricter projection, ToolGrant and qualification boundaries; the
+SREGym-derived upstream tree was not rewritten.
+
+Observed checks from the clean release worktree:
+
+- `uv run pytest -q`: `1062 passed, 1 skipped, 4 deselected`.
+- `uv run ruff check .`, `uv run pyright`, `uv run bandit -lll -q -r
+  clawgym_overlay tools`, lockfile hygiene and active-source coverage all
+  passed. Coverage was `88.27% line / 80.81% branch`.
+- `uv run ruff format --check clawgym_overlay ...` passed for all changed
+  files. The repository-wide formatter still reports six pre-existing,
+  unmodified upstream-derived files; they remain intentionally unchanged to
+  preserve upstream sync discipline.
+- The strict online `pip-audit` advisory query was interrupted at exit `130`
+  after the advisory service did not return within the bounded observation
+  window. It is not recorded as passed.
+
+This is a quality and boundary release only. It does not claim ECS,
+live-episode, formal conformance, Wave 5 or Wave 6 completion. The Provider
+continues to own environment execution, ToolGrant, lease, lifecycle, Oracle,
+recovery, revoke, cleanup and qualification facts.
 
 The Provider worktree contains the strict, secret-free
 `sregym.environment_projection.v1` producer. It covers environment release,
