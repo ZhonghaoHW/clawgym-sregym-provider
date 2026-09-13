@@ -6,10 +6,12 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import shutil
 import time
 from collections.abc import Callable, Coroutine, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 from clawgym.contracts import RunManifest, sha256_digest
@@ -33,6 +35,32 @@ def _utc_now() -> str:
 def _mapping(value: Any) -> Mapping[str, Any] | None:
     """Narrow untyped upstream JSON objects at the provider boundary."""
     return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else None
+
+
+def _trusted_shell_tool_dir() -> str | None:
+    """Return the host directory containing the pinned kubectl executable.
+
+    ZeroClaw deliberately rebuilds a trusted PATH for shell tools instead of
+    inheriting an ambient PATH.  The provider therefore passes the directory
+    as an explicit, non-secret host binding.  The runtime validates the
+    binding again before using it; this helper only avoids coupling the
+    provider to a particular distribution's installation prefix.
+    """
+
+    executable = shutil.which("kubectl")
+    if not isinstance(executable, str) or not executable:
+        return None
+    path = Path(executable)
+    if not path.is_absolute() or not path.is_file() or not path.stat().st_mode & 0o111:
+        return None
+    directory = path.parent
+    if directory.is_symlink() or not directory.is_dir():
+        return None
+    try:
+        canonical = directory.resolve(strict=True)
+    except OSError:
+        return None
+    return str(directory) if canonical == directory else None
 
 
 def _run[T](coroutine: Coroutine[Any, Any, T]) -> T:
@@ -340,11 +368,17 @@ class SREGymOracleProvider:
 class _SREGymAccessHandle:
     kubeconfig_path: str
     public_grant: SREGymToolGrantDescriptor | None = None
+    trusted_shell_path: str | None = None
 
     def child_environment(self) -> dict[str, str]:
-        """Return only the ephemeral variable needed by a generic AgentAdapter."""
+        """Return only explicit ephemeral variables for a generic AgentAdapter."""
 
-        return {"KUBECONFIG": self.kubeconfig_path}
+        environment = {
+            "KUBECONFIG": self.kubeconfig_path,
+        }
+        if self.trusted_shell_path is not None:
+            environment["ZEROCLAW_TRUSTED_SHELL_PATH"] = self.trusted_shell_path
+        return environment
 
 
 # Public aliases used by the compatibility adapters; retain the underscored
@@ -380,6 +414,7 @@ class SREGymToolAccessProvider:
             checks_mapping = cast(Mapping[str, Any], checks)
             if checks_mapping.get("passed") is not True:
                 raise RuntimeError("filtered Kubernetes access failed its host verification")
+            trusted_shell_path = _trusted_shell_tool_dir()
             public_grant = SREGymToolGrantDescriptor.issue(
                 run_manifest,
                 provider_id=self.provider_id,
@@ -397,7 +432,7 @@ class SREGymToolAccessProvider:
             if isinstance(reason_code, str) and reason_code.isidentifier():
                 safe_checks["reason_code"] = reason_code
             return ToolAccessGrant(
-                handle=_SREGymAccessHandle(path, public_grant),
+                handle=_SREGymAccessHandle(path, public_grant, trusted_shell_path),
                 evidence=(
                     EvidencePayload(
                         artifact_key=f"runs/{run_manifest.manifest_digest}/sregym-tool-grant.json",

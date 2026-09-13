@@ -848,7 +848,43 @@ def test_tool_access_handle_exposes_only_ephemeral_child_environment() -> None:
 
     grant = provider.grant(run)
 
-    assert grant.handle.child_environment() == {"KUBECONFIG": "/tmp/ephemeral-provider-kubeconfig"}
+    environment = grant.handle.child_environment()
+    assert environment["KUBECONFIG"] == "/tmp/ephemeral-provider-kubeconfig"
+    assert set(environment).issubset({"KUBECONFIG", "ZEROCLAW_TRUSTED_SHELL_PATH"})
+
+
+def test_tool_access_handle_exports_a_validated_host_tool_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    kubectl = tmp_path / "kubectl"
+    kubectl.write_text("binary-placeholder")
+    kubectl.chmod(0o755)
+    monkeypatch.setattr(
+        "clawgym_overlay.providers.sregym.shutil.which",
+        lambda name: str(kubectl) if name == "kubectl" else None,
+    )
+    conductor = FakeConductor()
+    run = SimpleNamespace(
+        manifest_digest="a" * 64,
+        agent_release=SimpleNamespace(agent_release_digest="b" * 64),
+        environment_release=SimpleNamespace(environment_release_digest="c" * 64),
+    )
+    provider = SREGymToolAccessProvider(
+        conductor,
+        "d" * 64,
+        ("mcp",),
+        ("get",),
+        ("kube-system",),
+        access_verifier=lambda _path: {"passed": True},
+        clock=lambda: NOW,
+    )
+
+    grant = provider.grant(run)
+
+    assert grant.handle.child_environment() == {
+        "KUBECONFIG": "/tmp/ephemeral-provider-kubeconfig",
+        "ZEROCLAW_TRUSTED_SHELL_PATH": str(tmp_path),
+    }
 
 
 def test_tool_access_failure_always_stops_proxy_and_redacts_verifier_output() -> None:
