@@ -21,6 +21,7 @@ from clawgym.providers import (
     ProviderBinding,
     ProviderDefinition,
     ProviderRegistry,
+    ToolAccessGrant,
 )
 from clawgym.runtime import LifecycleController
 from clawgym.worker import execute_worker
@@ -32,6 +33,7 @@ from clawgym_overlay.providers import (
     ReferenceAgentExecution,
     SREGymEnvironmentProvider,
     SREGymEnvironmentValidationAdapter,
+    SREGymExecutionBackend,
     SREGymObservationProvider,
     SREGymOracleProvider,
     SREGymReferenceAgentAdapter,
@@ -39,6 +41,7 @@ from clawgym_overlay.providers import (
 )
 from clawgym_overlay.providers.sregym import _SREGymAccessHandle
 from clawgym_overlay.release import build_environment_release, load_release_manifests
+from clawgym_overlay.tool_grant import SREGymToolGrantDescriptor
 from clawgym_overlay.worker import verify_release_revisions
 from clawgym_overlay.worker_profile import ReferenceAdapterDeps, build_reference_adapter
 
@@ -217,6 +220,39 @@ def test_real_provider_classes_close_an_in_memory_episode(tmp_path: Path) -> Non
     retained_text = "\n".join(path.read_text() for path in tmp_path.rglob("*.json"))
     assert "/tmp/ephemeral-provider-kubeconfig" not in retained_text
     assert "agent_claimed_verdict" not in retained_text
+
+
+def test_execution_backend_rejects_expired_authorization_before_agent_call() -> None:
+    run = SimpleNamespace(
+        manifest_digest="a" * 64,
+        agent_release=SimpleNamespace(agent_release_digest="b" * 64),
+        environment_release=SimpleNamespace(environment_release_digest="c" * 64),
+    )
+    public_grant = SREGymToolGrantDescriptor.issue(
+        run,
+        provider_id="sregym.filtered-tools.v1",
+        capabilities=("read.metrics",),
+        audience="run-scoped",
+        issued_at="2026-01-01T00:00:00Z",
+        ttl_seconds=60,
+        selector={"namespace": "default"},
+    )
+    grant = ToolAccessGrant(
+        _SREGymAccessHandle("/tmp/ephemeral-provider-kubeconfig", public_grant),
+        (EvidencePayload("tests/grant.json", {"status": "granted"}),),
+    )
+
+    class UnexpectedAgentCall:
+        def invoke(self, _run, _handle):
+            raise AssertionError("expired authorization reached the agent")
+
+    backend = SREGymExecutionBackend(
+        immutable_configuration_digest=sha256_digest({"execution": "test"}),
+        timeout_seconds=60,
+        clock=lambda: "2026-01-01T00:01:00Z",
+    )
+    with pytest.raises(PermissionError, match="expired"):
+        backend.execute(run, UnexpectedAgentCall(), grant)
 
 
 @pytest.mark.parametrize(

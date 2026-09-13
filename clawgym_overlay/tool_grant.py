@@ -164,6 +164,21 @@ class SREGymToolGrantDescriptor:
             )
         )
 
+    def is_active_at(self, observed_at: str) -> bool:
+        """Return whether this grant authorizes use at one canonical UTC instant.
+
+        The grant's expiry is an execution boundary, not merely a projection
+        field.  Keeping the check on the immutable descriptor gives every
+        provider execution path the same semantics without exposing the
+        underlying kubeconfig or introducing a second authorization schema.
+        """
+        if self.status != "granted":
+            return False
+        observed = _parse_timestamp(observed_at, "observed_at")
+        issued = _parse_timestamp(self.issued_at, "issued_at")
+        expires = _parse_timestamp(self.expires_at, "expires_at")
+        return issued <= observed < expires
+
     def revoked(self, revoked_at: str) -> SREGymToolGrantDescriptor:
         if self.status == "revoked":
             return self

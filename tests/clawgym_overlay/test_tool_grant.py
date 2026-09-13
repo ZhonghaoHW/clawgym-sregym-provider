@@ -49,6 +49,19 @@ def test_issue_is_run_bound_and_secret_free() -> None:
     assert grant.to_public_document(include_digest=False).get("grant_digest") is None
 
 
+def test_grant_activity_is_bounded_by_issued_and_expiry_times() -> None:
+    grant = _grant()
+
+    assert not grant.is_active_at("2025-12-31T23:59:59Z")
+    assert grant.is_active_at(ISSUED)
+    assert grant.is_active_at("2026-01-01T00:00:59Z")
+    assert not grant.is_active_at("2026-01-01T00:01:00Z")
+    assert not grant.revoked("2026-01-01T00:00:30Z").is_active_at("2026-01-01T00:00:31Z")
+
+    with pytest.raises(ValueError, match="canonical UTC"):
+        grant.is_active_at("2026-01-01T00:00:00.000Z")
+
+
 def test_revocation_is_immutable_and_idempotent() -> None:
     grant = _grant()
     revoked = grant.revoked("2026-01-01T00:01:00Z")

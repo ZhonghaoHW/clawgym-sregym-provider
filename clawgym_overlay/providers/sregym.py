@@ -560,10 +560,22 @@ class SREGymObservationProvider:
 class SREGymExecutionBackend:
     immutable_configuration_digest: str
     timeout_seconds: int
+    clock: Callable[[], str] = grant_utc_now
     provider_id: str = field(default="sregym.container-execution.v1", init=False)
     provider_type: str = field(default="execution_backend", init=False)
 
     def execute(self, run_manifest: RunManifest, adapter: Any, grant: ToolAccessGrant) -> AgentInvocationResult:
+        if not isinstance(grant.handle, _SREGymAccessHandle):
+            raise PermissionError("tool access authorization handle is invalid")
+        public_grant = grant.handle.public_grant
+        if (
+            public_grant is None
+            or public_grant.provider_id != "sregym.filtered-tools.v1"
+            or not public_grant.matches_run(run_manifest)
+        ):
+            raise PermissionError("tool access authorization is not bound to this run")
+        if not public_grant.is_active_at(self.clock()):
+            raise PermissionError("tool access authorization is expired or not active")
         result = adapter.invoke(run_manifest, grant.handle)
         if not isinstance(result, AgentInvocationResult):
             raise RuntimeError("AgentAdapter returned an invalid invocation result")
