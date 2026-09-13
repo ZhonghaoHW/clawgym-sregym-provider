@@ -248,6 +248,7 @@ To add a new application to SREGym:
    ```python
    from sregym.service.apps.base import Application
 
+
    class MyApp(Application):
        def __init__(self):
            super().__init__("sregym/service/metadata/<app-name>.json")
@@ -268,16 +269,14 @@ To add a new problem:
    from sregym.conductor.problems.base import Problem
    from sregym.utils.decorators import mark_fault_injected
 
+
    class MyProblem(Problem):
        def __init__(self):
            self.app = MyApp()
            self.faulty_service = ["service-name"]
 
            # Attach evaluation oracles
-           self.diagnosis_oracle = DiagnosisOracle(
-               problem=self,
-               expected=self.faulty_service
-           )
+           self.diagnosis_oracle = DiagnosisOracle(problem=self, expected=self.faulty_service)
            self.mitigation_oracle = MitigationOracle(problem=self)
 
        @mark_fault_injected

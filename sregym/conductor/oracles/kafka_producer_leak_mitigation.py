@@ -19,7 +19,7 @@ class KafkaProducerLeakOracle(MitigationOracle):
             except ApiException:
                 results["success"] = False
                 return results
-            
+
             if not checkout_deployment.spec.replicas or not kafka_deployment.spec.replicas:
                 results["success"] = False
                 return results
@@ -31,13 +31,15 @@ class KafkaProducerLeakOracle(MitigationOracle):
                             if e.value != self.problem.heap_limit:
                                 results["success"] = False
                                 return results
-                            
+
                             break
-                            
-                    if (c.resources.limits.get("memory") if c.resources and c.resources.limits else None) != self.problem.memory_limit:
+
+                    if (
+                        c.resources.limits.get("memory") if c.resources and c.resources.limits else None
+                    ) != self.problem.memory_limit:
                         results["success"] = False
                         return results
-                    
+
                     break
 
             pods = kubectl.list_pods(self.problem.namespace)

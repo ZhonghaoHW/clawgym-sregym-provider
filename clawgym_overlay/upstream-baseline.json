@@ -96,7 +96,7 @@
         "tests/clawgym_overlay/test_conductor_lifecycle_seam.py",
         "tests/clawgym_overlay/test_wp4_core_patches.py"
       ],
-      "sha256": "c4484576388594df06c20bd20209b54c7769a6951bd83ca8c5d9f8f6f3c37117"
+      "sha256": "f77c75160f21bd1568d99b8cdda337cc79b4cb9acb24789bf957dae8974f5037"
     },
     {
       "path": "sregym/service/apps/hotel_reservation.py",
@@ -144,7 +144,7 @@
       "tests": [
         "tests/clawgym_overlay/test_k8s_proxy_filtering.py"
       ],
-      "sha256": "45448198dfde28ad7ba4640572cdff95bb2d86d6d021d3222ab94565fbffd681"
+      "sha256": "c9198a223d67eb41be82898ed4394d44f390bb17849dad84e6a544e56eeb860e"
     },
     {
       "path": "sregym/observer/prometheus/prometheus/values.yaml",
@@ -160,7 +160,7 @@
       "tests": [
         "tests/clawgym_overlay/test_prometheus_lifecycle.py"
       ],
-      "sha256": "2ac3013dfd8f88923d44554b622b97874a152d8fd52b3f953c45bd3d58a59b70"
+      "sha256": "647c60fed2b8364c44f4e8066571d4adbd03deaff5cfc86f60e56191172e5279"
     },
     {
       "path": "sregym/conductor/oracles/kafka_producer_leak_mitigation.py",
@@ -168,7 +168,7 @@
       "tests": [
         "tests/clawgym_overlay/test_upstream_baseline.py"
       ],
-      "sha256": "5c55ce2545d46ab5bfc0a7bd73887600c84c364928428d0e21d0e7de7c4db203"
+      "sha256": "0f382faff65902145c98b68e7755e482dc8475114b1de82ee0b7b736a0e65358"
     },
     {
       "path": "sregym/conductor/problems/kafka_producer_leak.py",
@@ -176,7 +176,7 @@
       "tests": [
         "tests/clawgym_overlay/test_upstream_baseline.py"
       ],
-      "sha256": "314ac4ca009d9ae87641bdfcd1c9ca22f6bf3ec72131e3b0b069c17bd54f3292"
+      "sha256": "bfbd3b7a74d37f1b09d62e3499fd4c7ac9dcea0b0d500210e412600b9d5626a1"
     }
   ]
 }

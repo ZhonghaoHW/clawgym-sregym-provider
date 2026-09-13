@@ -142,9 +142,7 @@ class Conductor:
         if self.config.task_stages is not None:
             configured = list(self.config.task_stages)
             if not configured or not is_ordered_subset(configured, ["diagnosis", "mitigation"]):
-                raise RuntimeError(
-                    "Configured task stages must be a non-empty ordered subset of diagnosis, mitigation"
-                )
+                raise RuntimeError("Configured task stages must be a non-empty ordered subset of diagnosis, mitigation")
             self.tasklist = configured
             self.logger.info(f"Using explicitly configured task stages: {configured}")
             return
@@ -895,8 +893,7 @@ class Conductor:
 
         self.logger.info("[DEPLOY] Setting up metrics-server…")
         metrics_server_manifest = self.config.metrics_server_manifest or (
-            "https://github.com/kubernetes-sigs/metrics-server/"
-            "releases/latest/download/components.yaml"
+            "https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml"
         )
         self.kubectl.exec_command(f"kubectl apply -f {shlex.quote(metrics_server_manifest)}")
         self.kubectl.exec_command(
@@ -915,9 +912,7 @@ class Conductor:
 
         self.logger.info("[DEPLOY] Setting up OpenEBS…")
         self._preflight_openebs_udev_mount()
-        openebs_manifest = self.config.openebs_manifest or (
-            "https://openebs.github.io/charts/openebs-operator.yaml"
-        )
+        openebs_manifest = self.config.openebs_manifest or ("https://openebs.github.io/charts/openebs-operator.yaml")
         self.kubectl.exec_command(f"kubectl apply -f {shlex.quote(openebs_manifest)}")
         self.kubectl.exec_command(
             "kubectl patch storageclass openebs-hostpath "

@@ -82,10 +82,7 @@ class Prometheus:
         # verify it before applying the PVC.  This also closes the race where
         # cleanup has only just removed the previous observe namespace.
         kubectl = KubeCtl()
-        kubectl.exec_command(
-            f"kubectl create namespace {self.namespace} --dry-run=client -o yaml "
-            "| kubectl apply -f -"
-        )
+        kubectl.exec_command(f"kubectl create namespace {self.namespace} --dry-run=client -o yaml | kubectl apply -f -")
         try:
             kubectl.core_v1_api.read_namespace(name=self.namespace)
         except Exception as exc:

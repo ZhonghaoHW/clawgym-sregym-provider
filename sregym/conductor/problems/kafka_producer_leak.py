@@ -25,7 +25,7 @@ class KafkaProducerLeak(Problem):
         self.root_cause = self.build_structured_root_cause(
             component=f"deployment/{self.faulty_service}",
             namespace=f"{self.namespace}",
-            description=f"The {self.faulty_service} deployment has a sidecar container that continuously sends large messages to the Kafka broker concurrently, causing the broker to exhaust its heap memory through network receive buffer allocation pressure"
+            description=f"The {self.faulty_service} deployment has a sidecar container that continuously sends large messages to the Kafka broker concurrently, causing the broker to exhaust its heap memory through network receive buffer allocation pressure",
         )
         self.diagnosis_oracle = LLMAsAJudgeOracle(problem=self, expected=self.root_cause)
 

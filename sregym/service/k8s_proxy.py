@@ -71,16 +71,14 @@ def _response_filter_type(path: str) -> str | None:
     if "namespaces" in parts:
         namespace_index = parts.index("namespaces")
         resource_index = namespace_index + 2
-        if (
-            len(parts) == resource_index + 1
-            and parts[resource_index] in _FILTERED_LIST_RESOURCES
-        ):
+        if len(parts) == resource_index + 1 and parts[resource_index] in _FILTERED_LIST_RESOURCES:
             return "resources"
         return None
 
     if parts and parts[-1] in _FILTERED_LIST_RESOURCES:
         return "resources"
     return None
+
 
 # Disable SSL warnings for self-signed certs
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
