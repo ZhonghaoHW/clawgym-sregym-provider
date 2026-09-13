@@ -13,10 +13,11 @@ from pathlib import Path
 from typing import Any, cast
 
 from clawgym.artifacts import RetainedArtifactSink
-from clawgym.contracts import RunManifest, canonical_json_bytes, sha256_digest
+from clawgym.contracts import RunManifest, RuntimeReference, canonical_json_bytes, sha256_digest
 from clawgym.providers import ProviderBinding, ProviderDefinition, ProviderRegistry
 from clawgym.worker import execute_worker, verify_source_checkout
 
+from clawgym_overlay.agent_composition import AgentAdapterBuildContext, AgentAdapterComposition
 from clawgym_overlay.compatibility_registry import load_legacy_reference_profile, load_r0_bridge, resolve_r0_profile
 from clawgym_overlay.composition import register_sregym_providers
 from clawgym_overlay.deployment_lock import deployment_lock_digest, load_deployment_lock
@@ -40,7 +41,7 @@ from clawgym_overlay.worker_admission import (
     validate_campaign_execution,
     validate_worker_admission,
 )
-from clawgym_overlay.worker_profile import ReferenceAdapterDeps, build_reference_adapter
+from clawgym_overlay.worker_profile import ReferenceAdapterDeps, build_reference_adapter, build_zeroclaw_adapter
 from clawgym_overlay.worker_runtime import WorkerHostSession, WorkerRuntimeDeps, execute_admitted_trial
 
 
@@ -126,8 +127,14 @@ def verify_release_revisions(
         if provider_revision == compatibility_bridge["historical_provider_revision"]:
             raise ValueError("compatibility bridge requires the current executable provider checkout")
         return
-    if runtime != {"kind": "source_revision", "reference": provider_revision}:
-        raise ValueError("validation AgentRelease does not identify the provider checkout")
+    if environment_revision != provider_revision:
+        raise ValueError("EnvironmentRelease does not identify the provider checkout")
+    if not isinstance(runtime, Mapping):
+        raise ValueError("AgentRelease runtime reference is invalid")
+    try:
+        RuntimeReference.from_dict(cast(Mapping[str, Any], runtime))
+    except ValueError as exc:
+        raise ValueError("AgentRelease runtime reference is invalid") from exc
 
 
 def prepare_runtime_workdir(path: str | Path) -> Path:
@@ -265,30 +272,63 @@ def execute(args: argparse.Namespace) -> None:
         attribution_capture=lambda phase: capture_oracle_attribution(conductor, phase),
     )
     if run_document.get("lane") == "agent_validation":
-        adapter = build_reference_adapter(
-            agent_release=agent_document,
-            manifest_root=manifest_root,
-            materialization_bundle=args.materialization_bundle,
-            compatibility_bridge=compatibility_bridge_document,
-            secret_file=args.agent_secret_file,
-            deps=ReferenceAdapterDeps(
-                load_materialized=lambda bundle: load_materialized_reference_profile(
-                    bundle, profile_digest=agent_document.get("invocation_profile_digest")
-                ),
-                load_legacy=lambda root, digest: load_legacy_reference_profile(root, profile_digest=digest),
-                resolve_r0=lambda bridge, release, root: resolve_r0_profile(
-                    bridge, agent_release=release, manifest_root=root
-                ),
-                runner_factory=SafeStratusRunner,
-                adapter_factory=lambda digest, runner: SREGymReferenceAgentAdapter(
-                    digest,
-                    runner,
-                    steady_state_probe=lambda: bool(
-                        conductor.current_problem.mitigation_oracle._run_recommendation_probe()
+        composition = AgentAdapterComposition()
+        composition.register(
+            "sregym.reference-agent.v1",
+            lambda context: build_reference_adapter(
+                agent_release=context.agent_release,
+                manifest_root=context.manifest_root,
+                materialization_bundle=context.materialization_bundle,
+                compatibility_bridge=context.compatibility_bridge,
+                secret_file=context.secret_file,
+                deps=ReferenceAdapterDeps(
+                    load_materialized=lambda bundle: load_materialized_reference_profile(
+                        bundle, profile_digest=agent_document.get("invocation_profile_digest")
                     ),
-                    telemetry_capture=telemetry.capture,
+                    load_legacy=lambda root, digest: load_legacy_reference_profile(root, profile_digest=digest),
+                    resolve_r0=lambda bridge, release, root: resolve_r0_profile(
+                        bridge, agent_release=release, manifest_root=root
+                    ),
+                    runner_factory=SafeStratusRunner,
+                    adapter_factory=lambda digest, runner: SREGymReferenceAgentAdapter(
+                        digest,
+                        runner,
+                        steady_state_probe=lambda: bool(
+                            conductor.current_problem.mitigation_oracle._run_recommendation_probe()
+                        ),
+                        telemetry_capture=telemetry.capture,
+                    ),
                 ),
             ),
+        )
+        composition.register(
+            "zeroclaw.agent.v1",
+            lambda context: build_zeroclaw_adapter(
+                agent_release=context.agent_release,
+                logical_profile_path=context.zeroclaw_logical_profile,
+                config_bundle_path=context.zeroclaw_config_bundle,
+                executable=context.zeroclaw_executable,
+                config_dir=context.zeroclaw_config_dir,
+                workspace_dir=context.zeroclaw_workspace_dir,
+                message=context.zeroclaw_message,
+            ),
+        )
+        adapter = composition.build(
+            AgentAdapterBuildContext(
+                agent_release=agent_document,
+                manifest_root=manifest_root,
+                materialization_bundle=(
+                    Path(args.materialization_bundle) if args.materialization_bundle is not None else None
+                ),
+                compatibility_bridge=compatibility_bridge_document,
+                secret_file=args.agent_secret_file,
+                zeroclaw_logical_profile=getattr(args, "zeroclaw_logical_profile", None),
+                zeroclaw_config_bundle=getattr(args, "zeroclaw_config_bundle", None),
+                zeroclaw_executable=getattr(args, "zeroclaw_executable", None),
+                zeroclaw_config_dir=getattr(args, "zeroclaw_config_dir", None),
+                zeroclaw_workspace_dir=getattr(args, "zeroclaw_workspace_dir", None),
+                zeroclaw_message=getattr(args, "zeroclaw_message", None),
+            )
         )
     else:
         adapter = SREGymEnvironmentValidationAdapter(
@@ -462,6 +502,12 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--provider-revision", required=True)
     command.add_argument("--deployment-cache", required=True)
     command.add_argument("--agent-secret-file")
+    command.add_argument("--zeroclaw-logical-profile")
+    command.add_argument("--zeroclaw-config-bundle")
+    command.add_argument("--zeroclaw-executable")
+    command.add_argument("--zeroclaw-config-dir")
+    command.add_argument("--zeroclaw-workspace-dir")
+    command.add_argument("--zeroclaw-message")
     command.add_argument("--materialization-bundle")
     command.add_argument("--validation-request")
     command.add_argument("--candidate")

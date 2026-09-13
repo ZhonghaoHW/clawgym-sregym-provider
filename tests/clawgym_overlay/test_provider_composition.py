@@ -704,16 +704,21 @@ def test_reference_adapter_captures_host_owned_mitigation_window() -> None:
     assert summary["telemetry_window"]["window"] == "mitigation"
 
 
-def test_reference_runtime_revision_is_independent_from_retained_environment_release() -> None:
+def test_agent_runtime_revision_is_independent_from_provider_environment_release() -> None:
     verify_release_revisions(
         {"runtime_reference": {"kind": "source_revision", "reference": "a" * 40}},
         {"overlay_revision": "b" * 40},
-        "a" * 40,
+        "b" * 40,
     )
-    with pytest.raises(ValueError, match="AgentRelease"):
+    verify_release_revisions(
+        {"runtime_reference": {"kind": "source_revision", "reference": "b" * 40}},
+        {"overlay_revision": "b" * 40},
+        "b" * 40,
+    )
+    with pytest.raises(ValueError, match="EnvironmentRelease"):
         verify_release_revisions(
-            {"runtime_reference": {"kind": "source_revision", "reference": "b" * 40}},
-            {"overlay_revision": "b" * 40},
+            {"runtime_reference": {"kind": "source_revision", "reference": "a" * 40}},
+            {"overlay_revision": "c" * 40},
             "a" * 40,
         )
 

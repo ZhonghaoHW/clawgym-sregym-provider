@@ -75,7 +75,7 @@ def test_formal_topology_and_release_revision_guards(tmp_path: Path) -> None:
         "agent_release_digest": "a" * 64,
         "runtime_reference": {"kind": "source_revision", "reference": "b" * 40},
     }
-    environment = {"environment_release_digest": "c" * 64, "overlay_revision": "d" * 40}
+    environment = {"environment_release_digest": "c" * 64, "overlay_revision": "b" * 40}
     worker.verify_release_revisions(agent, environment, "b" * 40)
     with pytest.raises(ValueError, match="provider checkout"):
         worker.verify_release_revisions(agent, environment, "e" * 40)
@@ -462,11 +462,29 @@ def test_worker_cli_requires_and_preserves_explicit_materialized_inputs() -> Non
             "lease.json",
             "--environment-lease-root",
             "leases",
+            "--zeroclaw-logical-profile",
+            "zeroclaw-profile.json",
+            "--zeroclaw-config-bundle",
+            "zeroclaw-bundle.json",
+            "--zeroclaw-executable",
+            "/opt/zeroclaw",
+            "--zeroclaw-config-dir",
+            "/run/zeroclaw/config",
+            "--zeroclaw-workspace-dir",
+            "/run/zeroclaw/workspace",
+            "--zeroclaw-message",
+            "run task",
         ]
     )
     assert parsed.materialization_bundle == "bundle"
     assert parsed.attempt_claim_root == "claims"
     assert parsed.environment_lease_root == "leases"
+    assert parsed.zeroclaw_logical_profile == "zeroclaw-profile.json"
+    assert parsed.zeroclaw_config_bundle == "zeroclaw-bundle.json"
+    assert parsed.zeroclaw_executable == "/opt/zeroclaw"
+    assert parsed.zeroclaw_config_dir == "/run/zeroclaw/config"
+    assert parsed.zeroclaw_workspace_dir == "/run/zeroclaw/workspace"
+    assert parsed.zeroclaw_message == "run task"
 
 
 def test_execute_rejects_materialized_bundle_before_runtime_import(
@@ -542,7 +560,7 @@ def test_execute_legacy_environment_path_runs_through_typed_fakes(
     agent_path.write_text(
         json.dumps({"runtime_reference": {"kind": "source_revision", "reference": "a" * 40}}), encoding="utf-8"
     )
-    environment_path.write_text(json.dumps({"overlay_revision": "d" * 40}), encoding="utf-8")
+    environment_path.write_text(json.dumps({"overlay_revision": "a" * 40}), encoding="utf-8")
     run_path.write_text(json.dumps({"run_id": "run-1", "lane": "environment_validation"}), encoding="utf-8")
     args = _early_execute_args(
         tmp_path,
@@ -560,7 +578,7 @@ def test_execute_legacy_environment_path_runs_through_typed_fakes(
     agent_path.write_text(
         json.dumps({"runtime_reference": {"kind": "source_revision", "reference": "a" * 40}}), encoding="utf-8"
     )
-    environment_path.write_text(json.dumps({"overlay_revision": "d" * 40}), encoding="utf-8")
+    environment_path.write_text(json.dumps({"overlay_revision": "a" * 40}), encoding="utf-8")
 
     monkeypatch.setattr(worker, "verify_source_checkout", lambda *_args: None)
     monkeypatch.setattr(
@@ -724,7 +742,7 @@ def test_execute_materialized_agent_path_uses_claim_and_approved_bridge(
         json.dumps({"run_id": "run-agent", "lane": "agent_validation", "seed": 2026082701}), encoding="utf-8"
     )
     profile = {
-        "adapter_id": "sregym.reference-agent",
+        "adapter_id": "sregym.reference-agent.v1",
         "profile_digest": "p" * 64,
         "model_id": "openai/deepseek-v4-pro",
         "api_base": "https://gateway.invalid/v1",
@@ -742,7 +760,7 @@ def test_execute_materialized_agent_path_uses_claim_and_approved_bridge(
         ),
         encoding="utf-8",
     )
-    environment_path.write_text(json.dumps({"overlay_revision": "d" * 40}), encoding="utf-8")
+    environment_path.write_text(json.dumps({"overlay_revision": "a" * 40}), encoding="utf-8")
     secret = tmp_path / "agent-secret"
     secret.write_text("test-only", encoding="utf-8")
     secret.chmod(0o600)
@@ -815,7 +833,7 @@ def test_execute_materialized_agent_path_uses_claim_and_approved_bridge(
         ),
         encoding="utf-8",
     )
-    environment_path.write_text(json.dumps({"overlay_revision": "d" * 40}), encoding="utf-8")
+    environment_path.write_text(json.dumps({"overlay_revision": "a" * 40}), encoding="utf-8")
 
     monkeypatch.setattr(worker, "verify_source_checkout", lambda *_args: None)
     monkeypatch.setattr(worker, "verify_formal_kind_topology", lambda *_args: provider / "topology.yaml")
@@ -894,7 +912,7 @@ def test_execute_materialized_agent_path_uses_claim_and_approved_bridge(
             self.args, self.kwargs = args, kwargs
 
     class FakeAdapter:
-        provider_id = "sregym.reference-agent"
+        provider_id = "sregym.reference-agent.v1"
         provider_type = "agent_adapter"
         immutable_configuration_digest = "a" * 64
 
