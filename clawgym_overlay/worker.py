@@ -268,6 +268,8 @@ def execute(args: argparse.Namespace) -> None:
             baseline_window_seconds=manifests["fault"]["steady_state"]["baseline_window_seconds"],
             max_experiment_duration_seconds=manifests["fault"]["max_experiment_duration_seconds"],
         ),
+        mitigation_probe=lambda: bool(conductor.current_problem.mitigation_oracle._run_recommendation_probe()),
+        telemetry_capture=telemetry.capture,
         access_verifier=verify_filtered_kubernetes_access,
         attribution_capture=lambda phase: capture_oracle_attribution(conductor, phase),
     )
@@ -296,7 +298,6 @@ def execute(args: argparse.Namespace) -> None:
                         steady_state_probe=lambda: bool(
                             conductor.current_problem.mitigation_oracle._run_recommendation_probe()
                         ),
-                        telemetry_capture=telemetry.capture,
                     ),
                 ),
             ),
@@ -337,7 +338,6 @@ def execute(args: argparse.Namespace) -> None:
             namespace=adapter_profile["namespace"],
             policy_name=adapter_profile["resource_name"],
             steady_state_probe=lambda: bool(conductor.current_problem.mitigation_oracle._run_recommendation_probe()),
-            telemetry_capture=telemetry.capture,
         )
     registry.register_binding(_binding(adapter))
     sink = RetainedArtifactSink(

@@ -595,6 +595,8 @@ class SREGymObservationProvider:
 class SREGymExecutionBackend:
     immutable_configuration_digest: str
     timeout_seconds: int
+    mitigation_probe: Callable[[], bool] | None = None
+    telemetry_capture: Callable[[str, bool], Mapping[str, Any]] | None = None
     clock: Callable[[], str] = grant_utc_now
     provider_id: str = field(default="sregym.container-execution.v1", init=False)
     provider_type: str = field(default="execution_backend", init=False)
@@ -611,9 +613,32 @@ class SREGymExecutionBackend:
             raise PermissionError("tool access authorization is not bound to this run")
         if not public_grant.is_active_at(self.clock()):
             raise PermissionError("tool access authorization is expired or not active")
-        result = adapter.invoke(run_manifest, grant.handle)
+        try:
+            result = adapter.invoke(run_manifest, grant.handle)
+        except Exception:
+            # Preserve the adapter's real failure.  A failed invocation must
+            # never be relabeled as an observation failure, but the
+            # provider-owned causal recorder still gets a bounded mitigation
+            # sample when the host can collect one.
+            if self.telemetry_capture is not None:
+                with contextlib.suppress(Exception):
+                    healthy = bool(self.mitigation_probe()) if self.mitigation_probe is not None else False
+                    self.telemetry_capture("mitigation", healthy)
+            raise
         if not isinstance(result, AgentInvocationResult):
             raise RuntimeError("AgentAdapter returned an invalid invocation result")
+        if self.telemetry_capture is not None:
+            healthy = (
+                bool(self.mitigation_probe())
+                if self.mitigation_probe is not None
+                else result.outcome.status == "succeeded"
+            )
+            # A successful AgentAdapter invocation is not enough to finalize
+            # an SREGym episode.  The provider must record its own
+            # host-observed mitigation window.  Let failures propagate so the
+            # lifecycle remains fail-closed instead of producing incomplete
+            # causal evidence.
+            self.telemetry_capture("mitigation", healthy)
         if result.duration_ms > self.timeout_seconds * 1000:
             raise TimeoutError("agent invocation exceeded immutable execution timeout")
         return result

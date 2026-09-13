@@ -23,6 +23,8 @@ def build_sregym_bindings(
     manifests: Mapping[str, Mapping[str, Any]],
     snapshotter: Callable[[], Mapping[str, Any]],
     phase_probe: Callable[[str], Mapping[str, Any]] | None = None,
+    mitigation_probe: Callable[[], bool] | None = None,
+    telemetry_capture: Callable[[str, bool], Mapping[str, Any]] | None = None,
     access_verifier: Callable[[str], Mapping[str, Any]] | None = None,
     attribution_capture: Callable[[str], Mapping[str, Any]] | None = None,
 ) -> tuple[ProviderBinding, ...]:
@@ -62,6 +64,8 @@ def build_sregym_bindings(
         SREGymExecutionBackend(
             immutable_configuration_digest=digests["sregym.container-execution.v1"],
             timeout_seconds=execution["timeout_seconds"],
+            mitigation_probe=mitigation_probe,
+            telemetry_capture=telemetry_capture,
         ),
     )
     return tuple(
@@ -84,6 +88,8 @@ def register_sregym_providers(
     manifests: Mapping[str, Mapping[str, Any]],
     snapshotter: Callable[[], Mapping[str, Any]],
     phase_probe: Callable[[str], Mapping[str, Any]] | None = None,
+    mitigation_probe: Callable[[], bool] | None = None,
+    telemetry_capture: Callable[[str, bool], Mapping[str, Any]] | None = None,
     access_verifier: Callable[[str], Mapping[str, Any]] | None = None,
     attribution_capture: Callable[[str], Mapping[str, Any]] | None = None,
 ) -> tuple[ProviderBinding, ...]:
@@ -92,6 +98,8 @@ def register_sregym_providers(
         manifests=manifests,
         snapshotter=snapshotter,
         phase_probe=phase_probe,
+        mitigation_probe=mitigation_probe,
+        telemetry_capture=telemetry_capture,
         access_verifier=access_verifier,
         attribution_capture=attribution_capture,
     )

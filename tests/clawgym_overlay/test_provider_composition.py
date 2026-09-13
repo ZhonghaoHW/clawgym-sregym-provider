@@ -255,6 +255,85 @@ def test_execution_backend_rejects_expired_authorization_before_agent_call() -> 
         backend.execute(run, UnexpectedAgentCall(), grant)
 
 
+def test_execution_backend_records_provider_owned_mitigation_for_generic_adapter() -> None:
+    run = SimpleNamespace(
+        manifest_digest="a" * 64,
+        agent_release=SimpleNamespace(agent_release_digest="b" * 64),
+        environment_release=SimpleNamespace(environment_release_digest="c" * 64),
+    )
+    public_grant = SREGymToolGrantDescriptor.issue(
+        run,
+        provider_id="sregym.filtered-tools.v1",
+        capabilities=("read.metrics",),
+        audience="run-scoped",
+        issued_at=NOW,
+        ttl_seconds=60,
+        selector={"namespace": "default"},
+    )
+    grant = ToolAccessGrant(
+        _SREGymAccessHandle("/tmp/ephemeral-provider-kubeconfig", public_grant),
+        (EvidencePayload("tests/grant.json", {"status": "granted"}),),
+    )
+    captured: list[tuple[str, bool]] = []
+    backend = SREGymExecutionBackend(
+        immutable_configuration_digest=sha256_digest({"execution": "test"}),
+        timeout_seconds=60,
+        mitigation_probe=lambda: True,
+        telemetry_capture=lambda window, healthy: (
+            captured.append((window, healthy))
+            or {"window": window, "queries_succeeded": True, "service_healthy": healthy}
+        ),
+        clock=lambda: NOW,
+    )
+
+    result = backend.execute(run, FakeAdapter(sha256_digest({"adapter": "generic"})), grant)
+
+    assert result.outcome.status == "succeeded"
+    assert captured == [("mitigation", True)]
+
+
+def test_execution_backend_preserves_adapter_failure_when_mitigation_capture_fails() -> None:
+    run = SimpleNamespace(
+        manifest_digest="a" * 64,
+        agent_release=SimpleNamespace(agent_release_digest="b" * 64),
+        environment_release=SimpleNamespace(environment_release_digest="c" * 64),
+    )
+    public_grant = SREGymToolGrantDescriptor.issue(
+        run,
+        provider_id="sregym.filtered-tools.v1",
+        capabilities=("read.metrics",),
+        audience="run-scoped",
+        issued_at=NOW,
+        ttl_seconds=60,
+        selector={"namespace": "default"},
+    )
+    grant = ToolAccessGrant(
+        _SREGymAccessHandle("/tmp/ephemeral-provider-kubeconfig", public_grant),
+        (EvidencePayload("tests/grant.json", {"status": "granted"}),),
+    )
+
+    class FailingAgent:
+        def invoke(self, _run, _handle):
+            raise RuntimeError("agent execution failed")
+
+    captured: list[tuple[str, bool]] = []
+    backend = SREGymExecutionBackend(
+        immutable_configuration_digest=sha256_digest({"execution": "test"}),
+        timeout_seconds=60,
+        mitigation_probe=lambda: False,
+        telemetry_capture=lambda window, healthy: (
+            captured.append((window, healthy))
+            or {"window": window, "queries_succeeded": True, "service_healthy": healthy}
+        ),
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(RuntimeError, match="agent execution failed"):
+        backend.execute(run, FailingAgent(), grant)
+
+    assert captured == [("mitigation", False)]
+
+
 @pytest.mark.parametrize(
     ("submission", "expected_status"),
     [({"action": "removed policy"}, "succeeded"), (None, "failed")],
