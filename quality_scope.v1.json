@@ -4,6 +4,7 @@
   "version": 1,
   "active_files": [
     "clawgym_overlay/__init__.py",
+    "clawgym_overlay/agent_composition.py",
     "clawgym_overlay/composition.py",
     "clawgym_overlay/compatibility_registry.py",
     "clawgym_overlay/deployment_lock.py",

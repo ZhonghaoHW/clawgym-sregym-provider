@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from clawgym.contracts import sha256_digest
 
+import clawgym_overlay.worker_profile as worker_profile
 from clawgym_overlay.worker_profile import ReferenceAdapterDeps, build_reference_adapter
 
 
@@ -77,3 +79,87 @@ def test_rejects_identity_or_secret_before_runner(
             deps=_deps(calls, _profile()),
         )
     assert not any(isinstance(item, tuple) and item[0] == "runner" for item in calls)
+
+
+def test_explicit_object_reader_rejects_symlink_invalid_encoding_and_non_object(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    valid = target / "profile.json"
+    valid.write_text(json.dumps({"adapter_id": "zeroclaw.agent.v1"}), encoding="utf-8")
+
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink"):
+        worker_profile._read_explicit_object(link / "profile.json", "profile")
+
+    invalid_encoding = tmp_path / "invalid.json"
+    invalid_encoding.write_bytes(b"\xff")
+    with pytest.raises(ValueError, match="could not be read"):
+        worker_profile._read_explicit_object(invalid_encoding, "profile")
+
+    non_object = tmp_path / "list.json"
+    non_object.write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError, match="JSON object"):
+        worker_profile._read_explicit_object(non_object, "profile")
+
+
+def test_zeroclaw_builder_requires_explicit_inputs_before_file_reads(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="explicit inputs"):
+        worker_profile.build_zeroclaw_adapter(
+            agent_release={},
+            logical_profile_path=None,
+            config_bundle_path=tmp_path / "config.json",
+            executable=tmp_path / "zeroclaw",
+            config_dir=tmp_path / "config",
+            workspace_dir=tmp_path / "workspace",
+            message="run",
+        )
+
+
+def test_zeroclaw_builder_checks_release_identity_before_construction(tmp_path: Path, monkeypatch) -> None:
+    profile_path = tmp_path / "profile.json"
+    config_path = tmp_path / "config.json"
+    profile_path.write_text("{}", encoding="utf-8")
+    config_path.write_text("{}", encoding="utf-8")
+    executable = tmp_path / "zeroclaw"
+    executable.write_text("binary-placeholder", encoding="utf-8")
+    config_dir = tmp_path / "config"
+    workspace_dir = tmp_path / "workspace"
+    config_dir.mkdir()
+    workspace_dir.mkdir()
+    materialization = SimpleNamespace(profile_digest="p" * 64)
+    monkeypatch.setattr(worker_profile, "verify_zeroclaw_logical_profile", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(worker_profile, "materialize_zeroclaw_profile", lambda *_args, **_kwargs: materialization)
+
+    with pytest.raises(ValueError, match="runtime_reference"):
+        worker_profile.build_zeroclaw_adapter(
+            agent_release={},
+            logical_profile_path=profile_path,
+            config_bundle_path=config_path,
+            executable=executable,
+            config_dir=config_dir,
+            workspace_dir=workspace_dir,
+            message="run",
+        )
+
+    common = {
+        "logical_profile_path": profile_path,
+        "config_bundle_path": config_path,
+        "executable": executable,
+        "config_dir": config_dir,
+        "workspace_dir": workspace_dir,
+        "message": "run",
+    }
+    with pytest.raises(ValueError, match="ZeroClaw adapter"):
+        worker_profile.build_zeroclaw_adapter(
+            agent_release={"adapter_id": "reference.agent.v1", "runtime_reference": {}}, **common
+        )
+    with pytest.raises(ValueError, match="invocation profile"):
+        worker_profile.build_zeroclaw_adapter(
+            agent_release={
+                "adapter_id": "zeroclaw.agent.v1",
+                "runtime_reference": {},
+                "invocation_profile_digest": "q" * 64,
+            },
+            **common,
+        )
