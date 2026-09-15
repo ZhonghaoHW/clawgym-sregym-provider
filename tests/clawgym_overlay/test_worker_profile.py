@@ -28,12 +28,15 @@ def _deps(calls: list[object], profile: dict[str, str]) -> ReferenceAdapterDeps:
 def test_builds_materialized_adapter_only_after_identity_matches(tmp_path: Path) -> None:
     calls: list[object] = []
     profile = _profile()
+    secret = tmp_path / "secret"
+    secret.write_text("test-only", encoding="utf-8")
+    secret.chmod(0o600)
     result = build_reference_adapter(
         agent_release={"adapter_id": profile["adapter_id"], "invocation_profile_digest": profile["profile_digest"]},
         manifest_root=tmp_path,
         materialization_bundle=tmp_path / "bundle",
         compatibility_bridge=None,
-        secret_file="secret",
+        secret_file=secret,
         deps=_deps(calls, profile),
     )
     assert calls[0] == ("materialized", tmp_path / "bundle")
@@ -44,12 +47,15 @@ def test_builds_legacy_and_r0_compatibility_adapter(tmp_path: Path) -> None:
     calls: list[object] = []
     profile = _profile()
     bridge = {"historical_profile_digest": profile["profile_digest"]}
+    secret = tmp_path / "secret"
+    secret.write_text("test-only", encoding="utf-8")
+    secret.chmod(0o600)
     result = build_reference_adapter(
         agent_release={"adapter_id": profile["adapter_id"], "invocation_profile_digest": profile["profile_digest"]},
         manifest_root=tmp_path,
         materialization_bundle=None,
         compatibility_bridge=bridge,
-        secret_file="secret",
+        secret_file=secret,
         deps=_deps(calls, profile),
     )
     assert calls[0] == ("legacy", tmp_path, profile["profile_digest"])
@@ -79,6 +85,21 @@ def test_rejects_identity_or_secret_before_runner(
             deps=_deps(calls, _profile()),
         )
     assert not any(isinstance(item, tuple) and item[0] == "runner" for item in calls)
+
+
+def test_rejects_missing_secret_before_runner_construction(tmp_path: Path) -> None:
+    calls: list[object] = []
+    profile = _profile()
+    with pytest.raises(ValueError, match="unavailable"):
+        build_reference_adapter(
+            agent_release={"adapter_id": profile["adapter_id"], "invocation_profile_digest": profile["profile_digest"]},
+            manifest_root=tmp_path,
+            materialization_bundle=tmp_path / "bundle",
+            compatibility_bridge=None,
+            secret_file=tmp_path / "missing-secret",
+            deps=_deps(calls, profile),
+        )
+    assert not any(isinstance(item, tuple) and item[0] in {"runner", "adapter"} for item in calls)
 
 
 def test_explicit_object_reader_rejects_symlink_invalid_encoding_and_non_object(tmp_path: Path) -> None:

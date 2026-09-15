@@ -524,6 +524,9 @@ def test_materialized_reference_adapter_closes_through_retained_worker(tmp_path:
         runtime_reference="b" * 40,
     )
     profile = load_materialized_reference_profile(materialized_root)
+    secret = tmp_path / "agent-secret"
+    secret.write_text("test-only", encoding="utf-8")
+    secret.chmod(0o600)
 
     def fake_runner(**_kwargs: object):
         def run(_run_manifest: RunManifest, _kubeconfig_path: str) -> ReferenceAgentExecution:
@@ -547,7 +550,7 @@ def test_materialized_reference_adapter_closes_through_retained_worker(tmp_path:
         manifest_root=ROOT / "clawgym_overlay" / "manifests",
         materialization_bundle=materialized_root,
         compatibility_bridge=None,
-        secret_file=str(tmp_path / "agent-secret"),
+        secret_file=secret,
         deps=ReferenceAdapterDeps(
             load_materialized=lambda root: load_materialized_reference_profile(
                 root, profile_digest=profile["profile_digest"]

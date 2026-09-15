@@ -538,6 +538,42 @@ def test_execute_rejects_campaign_lock_mismatch_before_runtime_import(
         worker.execute(args)
 
 
+def test_agent_preflight_fails_before_runtime_workdir_or_conductor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing agent input must not create any runtime/environment side effect."""
+
+    provider_root = Path(worker.__file__).resolve().parents[1]
+    args = _early_execute_args(tmp_path, provider_checkout=str(provider_root))
+    Path(args.run_manifest).write_text(
+        json.dumps({"run_id": "preflight-only", "lane": "agent_validation"}), encoding="utf-8"
+    )
+    Path(args.agent_release).write_text(
+        json.dumps(
+            {
+                "adapter_id": "sregym.reference-agent.v1",
+                "agent_release_digest": "a" * 64,
+                "invocation_profile_digest": "b" * 64,
+                "runtime_reference": {"kind": "source_revision", "reference": "c" * 40},
+            }
+        ),
+        encoding="utf-8",
+    )
+    Path(args.environment_release).write_text(
+        json.dumps({"environment_release_digest": "d" * 64, "overlay_revision": "a" * 40}), encoding="utf-8"
+    )
+    monkeypatch.setattr(worker, "verify_source_checkout", lambda *_args: None)
+
+    def fail_before_runtime(**_kwargs: object) -> object:
+        raise ValueError("agent secret file is unavailable")
+
+    monkeypatch.setattr(worker, "build_reference_adapter", fail_before_runtime)
+    worker_root = Path(args.runtime_workdir)
+    with pytest.raises(ValueError, match="agent secret file is unavailable"):
+        worker.execute(args)
+    assert not worker_root.exists()
+
+
 def test_module_cli_help_is_a_safe_explicit_entrypoint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "argv", ["clawgym-provider-worker", "--help"])
     monkeypatch.delitem(sys.modules, "clawgym_overlay.worker")

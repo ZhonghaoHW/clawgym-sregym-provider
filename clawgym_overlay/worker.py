@@ -174,8 +174,6 @@ def execute(args: argparse.Namespace) -> None:
         environment_lease_root=getattr(args, "environment_lease_root", None),
     )
     run_id = admission.identity.run_id
-    runtime_workdir = args.runtime_workdir or str(Path(args.evidence_root).resolve().parent / f".runtime-{run_id}")
-    prepare_runtime_workdir(runtime_workdir)
     agent_document = documents.agent
     environment_document = documents.environment
     approval_document = documents.approval
@@ -211,12 +209,11 @@ def execute(args: argparse.Namespace) -> None:
         agent_document, environment_document, args.provider_revision, compatibility_bridge_document
     )
 
-    from sregym.conductor import conductor_api
-    from sregym.conductor.conductor import Conductor, ConductorConfig
-
-    run_api_callable: Callable[[Any], None] = cast(Callable[[Any], None], conductor_api.run_api)  # pyright: ignore[reportUnknownMemberType] -- upstream SREGym exposes no typed API stub
-    request_shutdown_callable: Callable[[], Any] = cast(Callable[[], Any], conductor_api.request_shutdown)
-
+    # Complete all adapter-specific construction and host-input validation
+    # before importing or starting the SREGym conductor.  In particular, a
+    # missing Reference credential must fail without preparing a namespace,
+    # workload, API server, or filtered kubeconfig.
+    manifest_root = provider_root / "clawgym_overlay" / "manifests"
     deployment_lock = load_deployment_lock(provider_root / "clawgym_overlay" / "deployment.wp4.lock.json")
     if (
         campaign_admission is not None
@@ -224,55 +221,14 @@ def execute(args: argparse.Namespace) -> None:
         and campaign_document.get("deployment_lock_digest") != deployment_lock_digest(deployment_lock)
     ):
         raise ValueError("campaign deployment lock does not match provider lock")
-    execution_profile = load_release_manifests(provider_root / "clawgym_overlay" / "manifests")["execution"]
+    manifests = load_release_manifests(manifest_root)
+    execution_profile = manifests["execution"]
     if execution_profile["deployment_lock_digest"] != deployment_lock_digest(deployment_lock):
         raise ValueError("execution profile does not identify the deployment lock")
     verify_formal_kind_topology(provider_root, execution_profile)
-    locked_runtime = LockedRuntime(deployment_lock, args.deployment_cache)
-    conductor_config = ConductorConfig(
-        deploy_loki=True,
-        enable_noise=False,
-        defer_cleanup=True,
-        task_stages=("mitigation",),
-    )
-    locked_runtime.configure_conductor(conductor_config)
-    conductor: Any = Conductor(conductor_config)
-    locked_runtime.configure_services(conductor)
-    os.environ["API_BIND_HOST"] = "0.0.0.0"
-    os.environ["API_PORT"] = "8000"
-    api_thread = threading.Thread(
-        target=run_api_callable,
-        args=(conductor,),
-        name="clawgym-wp5-conductor-api",
-        daemon=True,
-    )
-    session = WorkerHostSession(
-        start_api=api_thread.start,
-        request_shutdown=request_shutdown_callable,
-        join_api=lambda: api_thread.join(timeout=15),
-    )
-    manifest_root = provider_root / "clawgym_overlay" / "manifests"
-    manifests = load_release_manifests(manifest_root)
     adapter_profile, sink_profile = load_validation_profiles(manifest_root)
-    registry = ProviderRegistry()
-    telemetry = SREGymCausalTelemetryRecorder(build_kubernetes_telemetry_snapshotter(conductor))
-    register_sregym_providers(
-        registry,
-        conductor=conductor,
-        manifests=manifests,
-        snapshotter=telemetry,
-        phase_probe=SREGymLivePhaseProbe(
-            conductor,
-            telemetry_capture=telemetry.capture,
-            runtime_image_inventory=lambda: locked_runtime.cluster_image_inventory(conductor),
-            baseline_window_seconds=manifests["fault"]["steady_state"]["baseline_window_seconds"],
-            max_experiment_duration_seconds=manifests["fault"]["max_experiment_duration_seconds"],
-        ),
-        mitigation_probe=lambda: bool(conductor.current_problem.mitigation_oracle._run_recommendation_probe()),
-        telemetry_capture=telemetry.capture,
-        access_verifier=verify_filtered_kubernetes_access,
-        attribution_capture=lambda phase: capture_oracle_attribution(conductor, phase),
-    )
+
+    conductor: Any = None
     if run_document.get("lane") == "agent_validation":
         composition = AgentAdapterComposition()
         composition.register(
@@ -339,6 +295,58 @@ def execute(args: argparse.Namespace) -> None:
             policy_name=adapter_profile["resource_name"],
             steady_state_probe=lambda: bool(conductor.current_problem.mitigation_oracle._run_recommendation_probe()),
         )
+
+    runtime_workdir = args.runtime_workdir or str(Path(args.evidence_root).resolve().parent / f".runtime-{run_id}")
+    prepare_runtime_workdir(runtime_workdir)
+
+    from sregym.conductor import conductor_api
+    from sregym.conductor.conductor import Conductor, ConductorConfig
+
+    run_api_callable: Callable[[Any], None] = cast(Callable[[Any], None], conductor_api.run_api)  # pyright: ignore[reportUnknownMemberType] -- upstream SREGym exposes no typed API stub
+    request_shutdown_callable: Callable[[], Any] = cast(Callable[[], Any], conductor_api.request_shutdown)
+
+    locked_runtime = LockedRuntime(deployment_lock, args.deployment_cache)
+    conductor_config = ConductorConfig(
+        deploy_loki=True,
+        enable_noise=False,
+        defer_cleanup=True,
+        task_stages=("mitigation",),
+    )
+    locked_runtime.configure_conductor(conductor_config)
+    conductor = Conductor(conductor_config)
+    locked_runtime.configure_services(conductor)
+    os.environ["API_BIND_HOST"] = "0.0.0.0"
+    os.environ["API_PORT"] = "8000"
+    api_thread = threading.Thread(
+        target=run_api_callable,
+        args=(conductor,),
+        name="clawgym-wp5-conductor-api",
+        daemon=True,
+    )
+    session = WorkerHostSession(
+        start_api=api_thread.start,
+        request_shutdown=request_shutdown_callable,
+        join_api=lambda: api_thread.join(timeout=15),
+    )
+    registry = ProviderRegistry()
+    telemetry = SREGymCausalTelemetryRecorder(build_kubernetes_telemetry_snapshotter(conductor))
+    register_sregym_providers(
+        registry,
+        conductor=conductor,
+        manifests=manifests,
+        snapshotter=telemetry,
+        phase_probe=SREGymLivePhaseProbe(
+            conductor,
+            telemetry_capture=telemetry.capture,
+            runtime_image_inventory=lambda: locked_runtime.cluster_image_inventory(conductor),
+            baseline_window_seconds=manifests["fault"]["steady_state"]["baseline_window_seconds"],
+            max_experiment_duration_seconds=manifests["fault"]["max_experiment_duration_seconds"],
+        ),
+        mitigation_probe=lambda: bool(conductor.current_problem.mitigation_oracle._run_recommendation_probe()),
+        telemetry_capture=telemetry.capture,
+        access_verifier=verify_filtered_kubernetes_access,
+        attribution_capture=lambda phase: capture_oracle_attribution(conductor, phase),
+    )
     registry.register_binding(_binding(adapter))
     sink = RetainedArtifactSink(
         args.evidence_root,

@@ -16,6 +16,8 @@ from clawgym.contracts import sha256_digest
 from clawgym.zeroclaw_adapter import ZeroClawAgentAdapter, ZeroClawInvocationProfile
 from clawgym.zeroclaw_profile import materialize_zeroclaw_profile, verify_zeroclaw_logical_profile
 
+from clawgym_overlay.reference_runner import read_agent_secret
+
 
 @dataclass(frozen=True)
 class ReferenceAdapterDeps:
@@ -55,6 +57,11 @@ def build_reference_adapter(
         raise ValueError("AgentRelease does not identify the frozen invocation profile")
     if not secret_file:
         raise ValueError("WP5 reference worker requires --agent-secret-file")
+    # Validate the credential at composition time, before the worker starts
+    # Conductor/API or enters the environment lifecycle.  The runner reads it
+    # again only inside the isolated child-process boundary; this call does
+    # not retain or emit the credential.
+    read_agent_secret(secret_file)
     return deps.adapter_factory(
         sha256_digest(profile),
         deps.runner_factory(
