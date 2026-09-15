@@ -16,11 +16,24 @@ logger.propagate = True
 logger.setLevel(logging.DEBUG)
 
 
-# Namespaces that should never be deleted during reconciliation. `chaos-mesh`
-# is included so that noise injection survives the per-problem cleanup —
-# without it the conductor wipes the chaos-mesh helm release and CRDs after
-# every problem and the next noise injection silently fails.
-PROTECTED_NAMESPACES = frozenset({"kube-system", "kube-public", "kube-node-lease", "default", "sregym", "chaos-mesh"})
+# Namespaces that belong to the shared SREGym execution plane and must never be
+# deleted by per-problem reconciliation. The persisted baseline is intentionally
+# captured before shared infrastructure is installed, so relying on the
+# baseline alone would delete infrastructure on the first run that uses an old
+# snapshot. Keep this set explicit and version-independent for that reason.
+PROTECTED_NAMESPACES = frozenset(
+    {
+        "kube-system",
+        "kube-public",
+        "kube-node-lease",
+        "default",
+        "sregym",
+        "chaos-mesh",
+        "khaos",
+        "openebs",
+        "observe",
+    }
+)
 
 
 def _is_chaos_mesh_resource(name: str) -> bool:
@@ -43,6 +56,17 @@ def _is_chaos_mesh_resource(name: str) -> bool:
     return (
         ("chaos-mesh" in name) or ("chaos-controller" in name) or ("chaos-daemon" in name) or name in {"validate-auth"}
     )
+
+
+def _is_shared_infrastructure_resource(name: str) -> bool:
+    """Return whether a cluster-scoped resource belongs to OpenEBS.
+
+    OpenEBS is installed after the legacy bare-cluster baseline is captured.
+    Its namespace is protected above, but its storage classes and CRDs are
+    cluster-scoped and therefore need the same ownership treatment.
+    """
+
+    return bool(name) and "openebs" in name.lower()
 
 
 @dataclass
@@ -205,8 +229,26 @@ class ClusterStateManager:
             "coredns_reset": False,
         }
 
-        # 1. Delete unexpected namespaces
+        # Gather every deletion inventory before making any change. A legacy
+        # baseline may predate shared infrastructure, but a failed inventory
+        # must never be interpreted as proof that the resources are safe to
+        # delete.
+        self._inventory_failures = []
         current_namespaces = self._get_namespaces()
+        current_cluster_roles = self._get_cluster_roles()
+        current_bindings = self._get_cluster_role_bindings()
+        current_pvs = self._get_persistent_volumes()
+        current_scs = self._get_storage_classes()
+        current_crds = self._get_crds()
+        current_vwc = self._get_validating_webhook_configs()
+        current_mwc = self._get_mutating_webhook_configs()
+        protected_bindings_and_roles = self._get_protected_cluster_resources()
+        protected_persistent_volumes = self._get_protected_persistent_volumes()
+        if self._inventory_failures or protected_bindings_and_roles is None or protected_persistent_volumes is None:
+            raise RuntimeError("Cannot reconcile cluster safely: shared-resource ownership inventory failed")
+        protected_binding_names, protected_role_names = protected_bindings_and_roles
+
+        # 1. Delete unexpected namespaces
         unexpected_namespaces = current_namespaces - self.baseline.namespaces - PROTECTED_NAMESPACES
         for ns in unexpected_namespaces:
             logger.info(f"Deleting unexpected namespace: {ns}")
@@ -217,13 +259,12 @@ class ClusterStateManager:
                 logger.warning(f"Failed to delete namespace {ns}: {e}")
 
         # 2. Delete unexpected ClusterRoles
-        current_cluster_roles = self._get_cluster_roles()
-        unexpected_roles = current_cluster_roles - self.baseline.cluster_roles
+        unexpected_roles = current_cluster_roles - self.baseline.cluster_roles - protected_role_names
         for role in unexpected_roles:
             # Skip system roles that may have been auto-created
             if role.startswith("system:") or role.startswith("kubeadm:"):
                 continue
-            if _is_chaos_mesh_resource(role):
+            if _is_chaos_mesh_resource(role) or _is_shared_infrastructure_resource(role):
                 continue
             logger.info(f"Deleting unexpected ClusterRole: {role}")
             try:
@@ -234,10 +275,11 @@ class ClusterStateManager:
                     logger.warning(f"Failed to delete ClusterRole {role}: {e}")
 
         # 3. Delete unexpected ClusterRoleBindings
-        current_bindings = self._get_cluster_role_bindings()
         unexpected_bindings = current_bindings - self.baseline.cluster_role_bindings
         for binding in unexpected_bindings:
             if binding.startswith("system:") or binding.startswith("kubeadm:"):
+                continue
+            if binding in protected_binding_names or _is_shared_infrastructure_resource(binding):
                 continue
             if _is_chaos_mesh_resource(binding):
                 continue
@@ -250,8 +292,7 @@ class ClusterStateManager:
                     logger.warning(f"Failed to delete ClusterRoleBinding {binding}: {e}")
 
         # 4. Delete unexpected PersistentVolumes
-        current_pvs = self._get_persistent_volumes()
-        unexpected_pvs = current_pvs - self.baseline.persistent_volumes
+        unexpected_pvs = current_pvs - self.baseline.persistent_volumes - protected_persistent_volumes
         for pv in unexpected_pvs:
             logger.info(f"Deleting unexpected PersistentVolume: {pv}")
             try:
@@ -261,15 +302,11 @@ class ClusterStateManager:
                 if e.status != 404:
                     logger.warning(f"Failed to delete PersistentVolume {pv}: {e}")
 
-        # 4b. Garbage-collect orphaned OpenEBS LocalPV hostpath dirs.
-        # The openebs namespace is itself "unexpected" and gets deleted in step 1
-        # above, which kills the openebs-localpv-provisioner before it can run
-        # cleanup helper pods for any PVs it provisioned. Additionally, on
-        # control-plane nodes the dm-flakey path is intentionally skipped, so
-        # those nodes never get the rm -rf wipe that workers do at dm-flakey
-        # setup. Either path leaks /var/openebs/local/pvc-* dirs, eventually
-        # filling the disk and breaking subsequent deploys. Sweep them now that
-        # all unexpected PVs are gone from the API. Best-effort.
+        # 4b. Garbage-collect orphaned OpenEBS LocalPV hostpath dirs. The
+        # shared namespace and cluster resources are retained above; this sweep
+        # only removes directories that have no corresponding API PV after
+        # problem-owned PV deletion. It prevents stale LocalPV data from
+        # filling nodes between problem cycles. Best-effort.
         try:
             gc_results = self.kubectl.gc_orphan_localpv_dirs()
             total = sum(c for c in gc_results.values() if c > 0)
@@ -280,9 +317,10 @@ class ClusterStateManager:
             logger.warning(f"Failed to GC orphan LocalPV dirs: {e}")
 
         # 5. Delete unexpected StorageClasses
-        current_scs = self._get_storage_classes()
         unexpected_scs = current_scs - self.baseline.storage_classes
         for sc in unexpected_scs:
+            if _is_shared_infrastructure_resource(sc):
+                continue
             logger.info(f"Deleting unexpected StorageClass: {sc}")
             try:
                 self.storage_v1.delete_storage_class(name=sc)
@@ -292,10 +330,9 @@ class ClusterStateManager:
                     logger.warning(f"Failed to delete StorageClass {sc}: {e}")
 
         # 6. Delete unexpected CRDs (strip finalizers from CRs first to prevent hanging)
-        current_crds = self._get_crds()
         unexpected_crds = current_crds - self.baseline.crds
         for crd in unexpected_crds:
-            if _is_chaos_mesh_resource(crd):
+            if _is_chaos_mesh_resource(crd) or _is_shared_infrastructure_resource(crd):
                 continue
             logger.info(f"Deleting unexpected CRD: {crd}")
             self._strip_cr_finalizers(crd)
@@ -307,10 +344,9 @@ class ClusterStateManager:
                     logger.warning(f"Failed to delete CRD {crd}: {e}")
 
         # 7. Delete unexpected ValidatingWebhookConfigurations
-        current_vwc = self._get_validating_webhook_configs()
         unexpected_vwc = current_vwc - self.baseline.validating_webhook_configs
         for vwc in unexpected_vwc:
-            if _is_chaos_mesh_resource(vwc):
+            if _is_chaos_mesh_resource(vwc) or _is_shared_infrastructure_resource(vwc):
                 continue
             logger.info(f"Deleting unexpected ValidatingWebhookConfiguration: {vwc}")
             try:
@@ -321,10 +357,9 @@ class ClusterStateManager:
                     logger.warning(f"Failed to delete ValidatingWebhookConfiguration {vwc}: {e}")
 
         # 8. Delete unexpected MutatingWebhookConfigurations
-        current_mwc = self._get_mutating_webhook_configs()
         unexpected_mwc = current_mwc - self.baseline.mutating_webhook_configs
         for mwc in unexpected_mwc:
-            if _is_chaos_mesh_resource(mwc):
+            if _is_chaos_mesh_resource(mwc) or _is_shared_infrastructure_resource(mwc):
                 continue
             logger.info(f"Deleting unexpected MutatingWebhookConfiguration: {mwc}")
             try:
@@ -354,16 +389,72 @@ class ClusterStateManager:
         try:
             ns_list = self.core_v1.list_namespace()
             return {ns.metadata.name for ns in ns_list.items}
-        except ApiException as e:
+        except Exception as e:
+            self._record_inventory_failure("namespaces", e)
             logger.error(f"Failed to list namespaces: {e}")
             return set()
+
+    def _record_inventory_failure(self, resource: str, error: Exception) -> None:
+        """Remember an inventory failure so reconciliation can fail closed."""
+
+        failures = getattr(self, "_inventory_failures", None)
+        if failures is not None:
+            failures.append(f"{resource}: {error}")
+
+    def _get_protected_cluster_resources(self) -> tuple[set[str], set[str]] | None:
+        """Find cluster bindings and roles owned by shared namespaces.
+
+        ClusterRoleBindings are the reliable ownership edge for namespaced
+        service accounts. A stale baseline can omit both the binding and its
+        ClusterRole, so reconciliation must preserve the whole edge rather
+        than attempting to infer ownership from a role name.
+        """
+
+        try:
+            bindings = self.rbac_v1.list_cluster_role_binding().items
+            protected_bindings: set[str] = set()
+            protected_roles: set[str] = set()
+            for binding in bindings:
+                subjects = getattr(binding, "subjects", None) or []
+                if not any(getattr(subject, "namespace", None) in PROTECTED_NAMESPACES for subject in subjects):
+                    continue
+                binding_name = getattr(getattr(binding, "metadata", None), "name", None)
+                role_name = getattr(getattr(binding, "role_ref", None), "name", None)
+                if binding_name:
+                    protected_bindings.add(binding_name)
+                if role_name:
+                    protected_roles.add(role_name)
+            return protected_bindings, protected_roles
+        except Exception as e:
+            self._record_inventory_failure("shared ClusterRole ownership", e)
+            logger.error(f"Failed to inspect shared ClusterRole ownership: {e}")
+            return None
+
+    def _get_protected_persistent_volumes(self) -> set[str] | None:
+        """Find PVs claimed by shared namespaces before any PV deletion."""
+
+        try:
+            pvs = self.core_v1.list_persistent_volume().items
+            protected: set[str] = set()
+            for pv in pvs:
+                name = getattr(getattr(pv, "metadata", None), "name", None)
+                claim_ref = getattr(getattr(pv, "spec", None), "claim_ref", None)
+                claim_namespace = getattr(claim_ref, "namespace", None)
+                if name and (claim_namespace in PROTECTED_NAMESPACES or _is_shared_infrastructure_resource(name)):
+                    protected.add(name)
+            return protected
+        except Exception as e:
+            self._record_inventory_failure("shared PersistentVolume ownership", e)
+            logger.error(f"Failed to inspect shared PersistentVolume ownership: {e}")
+            return None
 
     def _get_cluster_roles(self) -> set[str]:
         """Get all ClusterRole names."""
         try:
             roles = self.rbac_v1.list_cluster_role()
             return {role.metadata.name for role in roles.items}
-        except ApiException as e:
+        except Exception as e:
+            self._record_inventory_failure("ClusterRoles", e)
             logger.error(f"Failed to list ClusterRoles: {e}")
             return set()
 
@@ -372,7 +463,8 @@ class ClusterStateManager:
         try:
             bindings = self.rbac_v1.list_cluster_role_binding()
             return {binding.metadata.name for binding in bindings.items}
-        except ApiException as e:
+        except Exception as e:
+            self._record_inventory_failure("ClusterRoleBindings", e)
             logger.error(f"Failed to list ClusterRoleBindings: {e}")
             return set()
 
@@ -381,7 +473,8 @@ class ClusterStateManager:
         try:
             pvs = self.core_v1.list_persistent_volume()
             return {pv.metadata.name for pv in pvs.items}
-        except ApiException as e:
+        except Exception as e:
+            self._record_inventory_failure("PersistentVolumes", e)
             logger.error(f"Failed to list PersistentVolumes: {e}")
             return set()
 
@@ -390,7 +483,8 @@ class ClusterStateManager:
         try:
             scs = self.storage_v1.list_storage_class()
             return {sc.metadata.name for sc in scs.items}
-        except ApiException as e:
+        except Exception as e:
+            self._record_inventory_failure("StorageClasses", e)
             logger.error(f"Failed to list StorageClasses: {e}")
             return set()
 
@@ -453,7 +547,8 @@ class ClusterStateManager:
         try:
             crds = self.apiextensions_v1.list_custom_resource_definition()
             return {crd.metadata.name for crd in crds.items}
-        except ApiException as e:
+        except Exception as e:
+            self._record_inventory_failure("CRDs", e)
             logger.error(f"Failed to list CRDs: {e}")
             return set()
 
@@ -462,7 +557,8 @@ class ClusterStateManager:
         try:
             configs = self.admission_v1.list_validating_webhook_configuration()
             return {cfg.metadata.name for cfg in configs.items}
-        except ApiException as e:
+        except Exception as e:
+            self._record_inventory_failure("ValidatingWebhookConfigurations", e)
             logger.error(f"Failed to list ValidatingWebhookConfigurations: {e}")
             return set()
 
@@ -471,7 +567,8 @@ class ClusterStateManager:
         try:
             configs = self.admission_v1.list_mutating_webhook_configuration()
             return {cfg.metadata.name for cfg in configs.items}
-        except ApiException as e:
+        except Exception as e:
+            self._record_inventory_failure("MutatingWebhookConfigurations", e)
             logger.error(f"Failed to list MutatingWebhookConfigurations: {e}")
             return set()
 

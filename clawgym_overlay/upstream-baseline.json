@@ -177,6 +177,14 @@
         "tests/clawgym_overlay/test_upstream_baseline.py"
       ],
       "sha256": "bfbd3b7a74d37f1b09d62e3499fd4c7ac9dcea0b0d500210e412600b9d5626a1"
+    },
+    {
+      "path": "sregym/service/cluster_state.py",
+      "rationale": "clawgym_overlay/docs/core-patches/0005-shared-infrastructure-cleanup-ownership.md",
+      "tests": [
+        "tests/clawgym_overlay/test_cluster_state_reconciliation.py"
+      ],
+      "sha256": "2d6bef7a0ed3f301db0dd58dc8f895e80aa358a13e9099984eacaf4c8f4380bb"
     }
   ]
 }
