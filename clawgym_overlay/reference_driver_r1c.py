@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.constants import END
 from langgraph.types import Command
 
 from clients.stratus.stratus_agent.diagnosis_agent import DiagnosisAgent
@@ -25,6 +26,7 @@ _upstream_wait_for_stage_switch = driver.wait_for_stage_switch
 _original_diagnosis_submit: Callable[..., Any] | None = None
 _original_diagnosis_call_model: Callable[..., Any] | None = None
 _original_diagnosis_force_submit: Any = None
+_original_diagnosis_should_continue: Callable[..., Any] | None = None
 _original_driver_wait: Callable[..., Any] | None = None
 _original_driver_summary: Callable[[Any, Any], str] | None = None
 _handoff: dict[str, Any] | None = None
@@ -191,6 +193,31 @@ def _r1c_call_model(self: Any, state: Mapping[str, Any]) -> dict[str, Any]:
     return {**result, "messages": [*messages[:-1], synthetic]}
 
 
+def _r1c_should_continue(self: Any, state: Mapping[str, Any]) -> Any:
+    """Reserve an explicit finalization turn for a non-submission answer.
+
+    The upstream graph treats an assistant message without tool calls as a
+    terminal answer.  That is correct for a conversational agent, but it is
+    not sufficient for this bounded remediation protocol: a diagnosis may be
+    expressed as ordinary text after a read-only tool call, and ending there
+    would silently skip the typed handoff gate.  Route that one case to the
+    existing, explicit ``force_submit`` node.  The node still requires a
+    model-authored, identity-bound handoff and fails closed if it cannot get
+    one; this does not synthesize a diagnosis or invoke the environment.
+    """
+
+    if _original_diagnosis_should_continue is None:
+        raise R1cHandoffError("R1c diagnosis continuation hook is unavailable")
+    route = _original_diagnosis_should_continue(self, state)
+    if route != END or state.get("submitted") is True:
+        return route
+    raw_messages = state.get("messages", [])
+    messages = cast(list[Any], raw_messages) if isinstance(raw_messages, list) else []
+    if messages and isinstance(messages[-1], AIMessage) and not messages[-1].tool_calls:
+        return "force_submit"
+    return route
+
+
 def _validated_summary(_last_state: Any, _summary_system_prompt: Any) -> str:
     if _handoff is None:
         raise R1cHandoffError("R1c mitigation cannot start without a validated handoff")
@@ -213,16 +240,19 @@ async def _wait_for_host_controlled_terminal(**kwargs: Any) -> str:
 
 def main() -> None:
     global _original_diagnosis_submit, _original_diagnosis_call_model, _original_diagnosis_force_submit
+    global _original_diagnosis_should_continue
     global _original_driver_wait, _original_driver_summary, _handoff, _handoff_rejections
     _handoff = None
     _handoff_rejections = 0
     _original_diagnosis_submit = getattr(submit_tool, "coroutine", None)
     _original_diagnosis_call_model = DiagnosisAgent.call_model
     _original_diagnosis_force_submit = DiagnosisAgent.force_submit
+    _original_diagnosis_should_continue = DiagnosisAgent.should_continue
     _original_driver_wait = cast(Callable[..., Any], driver.wait_for_stage_switch)
     _original_driver_summary = cast(Callable[[Any, Any], str], vars(driver)["generate_run_summary"])
     DiagnosisAgent.call_model = _r1c_call_model  # pyright: ignore[reportAttributeAccessIssue]
     DiagnosisAgent.force_submit = _bounded_force_submit  # pyright: ignore[reportAttributeAccessIssue]
+    DiagnosisAgent.should_continue = _r1c_should_continue  # pyright: ignore[reportAttributeAccessIssue]
     submit_tool.coroutine = _gated_diagnosis_submit  # pyright: ignore[reportAttributeAccessIssue]
     driver.wait_for_stage_switch = _wait_for_host_controlled_terminal
     driver.generate_run_summary = _validated_summary
@@ -231,6 +261,7 @@ def main() -> None:
     finally:
         DiagnosisAgent.call_model = _original_diagnosis_call_model  # pyright: ignore[reportAttributeAccessIssue]
         DiagnosisAgent.force_submit = _original_diagnosis_force_submit  # pyright: ignore[reportAttributeAccessIssue]
+        DiagnosisAgent.should_continue = _original_diagnosis_should_continue  # pyright: ignore[reportAttributeAccessIssue]
         submit_tool.coroutine = _original_diagnosis_submit  # pyright: ignore[reportAttributeAccessIssue]
         driver.wait_for_stage_switch = _original_driver_wait
         driver.generate_run_summary = _original_driver_summary

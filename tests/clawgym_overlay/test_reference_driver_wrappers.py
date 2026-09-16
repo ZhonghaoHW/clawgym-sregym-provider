@@ -119,6 +119,31 @@ def test_r1c_valid_structured_text_uses_the_gated_submit_tool(monkeypatch) -> No
     assert message.tool_calls[0]["args"]["ans"] == _r1c_submission()
 
 
+def test_r1c_plain_final_answer_enters_explicit_finalization(monkeypatch) -> None:
+    import clawgym_overlay.reference_driver_r1c as driver
+
+    monkeypatch.setattr(driver, "_original_diagnosis_should_continue", lambda _agent, _state: "__end__")
+    result = driver._r1c_should_continue(
+        object(),
+        {"messages": [AIMessage(content="The policy blocks recommendation traffic.")], "submitted": False},
+    )
+    assert result == "force_submit"
+
+
+def test_r1c_non_answer_terminal_paths_are_not_rewritten(monkeypatch) -> None:
+    import clawgym_overlay.reference_driver_r1c as driver
+
+    monkeypatch.setattr(driver, "_original_diagnosis_should_continue", lambda _agent, _state: "__end__")
+    tool_call = AIMessage(
+        content="",
+        tool_calls=[{"name": "get_services", "args": {}, "id": "read-1", "type": "tool_call"}],
+    )
+    assert driver._r1c_should_continue(object(), {"messages": [tool_call], "submitted": False}) == "__end__"
+    assert (
+        driver._r1c_should_continue(object(), {"messages": [AIMessage(content="done")], "submitted": True}) == "__end__"
+    )
+
+
 def test_r1c_gated_submit_rejects_invalid_payload_before_upstream(monkeypatch) -> None:
     import clawgym_overlay.reference_driver_r1c as driver
 
