@@ -64,6 +64,31 @@ def test_reference_adapter_preserves_process_timeout_status() -> None:
     assert summary["container_timeout_seconds"] == 30
 
 
+def test_reference_adapter_rejects_incomplete_diagnosis_handoff_after_zero_exit() -> None:
+    adapter = SREGymReferenceAgentAdapter(
+        sha256_digest({"adapter": "current-reference-incomplete-diagnosis"}),
+        lambda _run, _kubeconfig: ReferenceAgentExecution(
+            exit_code=0,
+            submission={"agent_claimed_verdict": "pass"},
+            duration_ms=4,
+            transcript_digest="b" * 64,
+            transcript_bytes=4,
+            transcript="bounded process evidence",
+            image_digest="c" * 64,
+            diagnosis_handoff={"status": "incomplete"},
+        ),
+        clock=lambda: NOW,
+    )
+
+    result = adapter.invoke(_reference_run(), SREGymAccessHandle("/temporary/filtered-kubeconfig"))
+
+    assert result.outcome.status == "failed"
+    assert result.submission is None
+    summary = result.outcome.evidence[0].document["summary"]
+    assert summary["completion_validated"] is False
+    assert summary["completion_failure_reason"] == "diagnosis_handoff_incomplete"
+
+
 class _ToolConductor:
     def __init__(self) -> None:
         self.calls: list[str] = []

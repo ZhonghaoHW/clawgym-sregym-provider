@@ -4,33 +4,147 @@ import asyncio
 import hashlib
 import json
 
+import pytest
+from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.types import Command
 
-def test_r1c_bounded_force_submit_and_summary(monkeypatch) -> None:
+
+def _r1c_payload() -> dict[str, object]:
+    return {
+        "symptom": "recommendation unavailable",
+        "target_component": "recommendation",
+        "evidence": ["endpoint unhealthy"],
+        "root_cause_hypothesis": "network policy",
+        "candidate_resource": {
+            "kind": "NetworkPolicy",
+            "namespace": "hotel-reservation",
+            "name": "deny-all-recommendation",
+        },
+        "minimal_remediation": "delete the policy",
+        "verification_plan": ["reread policy", "check endpoint"],
+    }
+
+
+def _r1c_submission() -> str:
+    return "R1C_HANDOFF_JSON " + json.dumps(_r1c_payload(), separators=(",", ":"))
+
+
+def test_r1c_bounded_force_submit_requires_a_validated_model_handoff(monkeypatch, tmp_path) -> None:
     import clawgym_overlay.reference_driver_r1c as driver
 
     calls: list[str] = []
 
-    async def submit(*, ans: str) -> None:
+    async def submit(*, ans: str, state: object, tool_call_id: str) -> Command:
         calls.append(ans)
+        return Command(
+            update={
+                "submitted": True,
+                "messages": [ToolMessage(content="accepted", tool_call_id=tool_call_id)],
+            }
+        )
 
-    monkeypatch.setattr(driver, "manual_submit_tool", submit)
+    monkeypatch.setattr(driver, "_original_diagnosis_submit", submit)
+    monkeypatch.setattr(driver, "_handoff", None)
+    monkeypatch.setenv("SREGYM_RUN_MANIFEST_DIGEST", "a" * 64)
+    monkeypatch.setenv("SREGYM_AGENT_RELEASE_DIGEST", "b" * 64)
+    monkeypatch.setenv("AGENT_LOGS_DIR", str(tmp_path))
 
-    class Logger:
-        def warning(self, _message: str) -> None:
-            return None
+    class Llm:
+        def inference(self, *, messages, tools):
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "submit_tool",
+                        "args": {"ans": _r1c_submission()},
+                        "id": "force-1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
 
-    class State:
-        values = {"messages": ["a", "b"]}
+    class Submit:
+        name = "submit_tool"
 
-    result = asyncio.run(driver._bounded_force_submit(type("Agent", (), {"logger": Logger()})(), {}))
+    agent = type("Agent", (), {"llm": Llm(), "submit_tool": Submit()})()
+    result = asyncio.run(driver._bounded_force_submit(agent, {"messages": [], "num_steps": 4}))
     assert result["submitted"] is True
-    assert calls == ['R1C_HANDOFF_JSON {"status":"incomplete"}']
-    assert "R1c bounded" in driver._bounded_generate_run_summary(State(), None)
+    assert calls == [_r1c_submission()]
+    document = json.loads((tmp_path / "r1c-handoff.json").read_text())
+    assert document["status"] == "complete"
+    assert json.loads(driver._validated_summary(None, None))["status"] == "complete"
+
+
+def test_r1c_bounded_force_submit_fails_closed_without_a_tool_call(monkeypatch) -> None:
+    import clawgym_overlay.reference_driver_r1c as driver
+
+    calls: list[str] = []
+
+    async def submit(*, ans: str, state: object, tool_call_id: str) -> Command:
+        calls.append(ans)
+        return Command(update={"submitted": True})
+
+    class Llm:
+        def inference(self, *, messages, tools):
+            return AIMessage(content="plain answer")
+
+    class Submit:
+        name = "submit_tool"
+
+    monkeypatch.setattr(driver, "_original_diagnosis_submit", submit)
+    monkeypatch.setattr(driver, "_handoff", None)
+    agent = type("Agent", (), {"llm": Llm(), "submit_tool": Submit()})()
+    with pytest.raises(driver.R1cHandoffError, match="structured handoff"):
+        asyncio.run(driver._bounded_force_submit(agent, {"messages": [], "num_steps": 4}))
+    assert calls == []
+
+
+def test_r1c_valid_structured_text_uses_the_gated_submit_tool(monkeypatch) -> None:
+    import clawgym_overlay.reference_driver_r1c as driver
+
+    monkeypatch.setenv("SREGYM_RUN_MANIFEST_DIGEST", "a" * 64)
+    monkeypatch.setenv("SREGYM_AGENT_RELEASE_DIGEST", "b" * 64)
+
+    def original_call_model(_agent, _state):
+        return {"messages": [AIMessage(content=_r1c_submission())]}
+
+    class Submit:
+        name = "submit_tool"
+
+    monkeypatch.setattr(driver, "_original_diagnosis_call_model", original_call_model)
+    result = driver._r1c_call_model(type("Agent", (), {"submit_tool": Submit()})(), {"messages": []})
+    message = result["messages"][-1]
+    assert isinstance(message, AIMessage)
+    assert message.tool_calls[0]["name"] == "submit_tool"
+    assert message.tool_calls[0]["args"]["ans"] == _r1c_submission()
+
+
+def test_r1c_gated_submit_rejects_invalid_payload_before_upstream(monkeypatch) -> None:
+    import clawgym_overlay.reference_driver_r1c as driver
+
+    calls: list[str] = []
+
+    async def submit(*, ans: str, state: object, tool_call_id: str) -> Command:
+        calls.append(ans)
+        return Command(update={"submitted": True})
+
+    monkeypatch.setattr(driver, "_original_diagnosis_submit", submit)
+    monkeypatch.setattr(driver, "_handoff", None)
+    monkeypatch.setenv("SREGYM_RUN_MANIFEST_DIGEST", "a" * 64)
+    monkeypatch.setenv("SREGYM_AGENT_RELEASE_DIGEST", "b" * 64)
+    result = asyncio.run(
+        driver._gated_diagnosis_submit('R1C_HANDOFF_JSON {"status":"incomplete"}', {"num_steps": 4}, "call-1")
+    )
+    assert isinstance(result, Command)
+    assert result.update.get("submitted") is not True
+    assert calls == []
+    assert driver._handoff is None
 
 
 def test_r1c_host_stage_wait_is_bounded(monkeypatch) -> None:
     import clawgym_overlay.reference_driver_r1c as driver
 
+    monkeypatch.setattr(driver, "_handoff", {"status": "complete"})
     observed: dict[str, object] = {}
 
     async def upstream(**kwargs):

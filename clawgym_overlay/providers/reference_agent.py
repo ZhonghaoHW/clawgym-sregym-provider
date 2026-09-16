@@ -57,6 +57,9 @@ def _completion_failure_reason(execution: ReferenceAgentExecution) -> str | None
     transaction = execution.remediation_transaction
     if transaction is not None and transaction.get("status") != "executed":
         return "remediation_transaction_incomplete"
+    handoff = execution.diagnosis_handoff
+    if handoff is not None and handoff.get("status") != "complete":
+        return "diagnosis_handoff_incomplete"
     journal = execution.gate_event_journal
     if journal is not None:
         state = journal.get("state")

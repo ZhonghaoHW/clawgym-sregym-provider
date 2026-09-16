@@ -22,6 +22,7 @@
     "clawgym_overlay/providers/reference_agent.py",
     "clawgym_overlay/providers/sregym.py",
     "clawgym_overlay/qualification_runner.py",
+    "clawgym_overlay/r1c_protocol.py",
     "clawgym_overlay/r1f_protocol.py",
     "clawgym_overlay/reference_driver_r1f.py",
     "clawgym_overlay/materialized_profile.py",

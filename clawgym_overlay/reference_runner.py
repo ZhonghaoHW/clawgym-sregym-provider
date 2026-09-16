@@ -18,11 +18,27 @@ from clawgym.contracts import RunManifest
 
 from clawgym_overlay.compatibility_registry import target_resource, validate_legacy_handoff
 from clawgym_overlay.providers.reference_agent import ReferenceAgentExecution
+from clawgym_overlay.r1c_protocol import (
+    MARKER as _R1C_MARKER,
+)
+from clawgym_overlay.r1c_protocol import (
+    incomplete_handoff as _incomplete_r1c_handoff,
+)
+from clawgym_overlay.r1c_protocol import (
+    marker_payload as _r1c_marker_payload,
+)
+from clawgym_overlay.r1c_protocol import (
+    normalise_payload as _normalise_r1c_handoff,
+)
+from clawgym_overlay.r1c_protocol import (
+    validate_document as _validate_r1c_document,
+)
 from clawgym_overlay.r1f_protocol import endpoint_result_ready, handoff_from_trajectory_records, parse_command
 
 _SENSITIVE_OUTPUT = re.compile(
     r"(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}|"
     r"(?:sk|ak)-[A-Za-z0-9_-]{12,}|"
+    r"\b[A-Za-z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD)[A-Za-z0-9_]*\s*=\s*[^\s]+|"
     r"\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b|"
     r"-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|CERTIFICATE)-----|"
     r"\bclient-(?:certificate|key)-data\s*:|"
@@ -46,6 +62,8 @@ def _trajectory_records(root: Path) -> tuple[dict[str, Any], ...]:
     records: list[dict[str, Any]] = []
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.is_symlink():
+            continue
+        if path.name == "agent.env":
             continue
         payload = path.read_bytes()
         records.append(
@@ -103,37 +121,6 @@ def _docker_mount_args(mounts: list[str]) -> list[str]:
     return args
 
 
-_R1C_MARKER = "R1C_HANDOFF_JSON"
-_R1C_TARGET = {
-    "kind": "NetworkPolicy",
-    "namespace": "hotel-reservation",
-    "name": "deny-all-recommendation",
-}
-_R1C_REQUIRED_FIELDS = (
-    "symptom",
-    "target_component",
-    "evidence",
-    "root_cause_hypothesis",
-    "candidate_resource",
-    "minimal_remediation",
-    "verification_plan",
-)
-
-
-def _r1c_marker_payload(value: str) -> dict[str, Any] | None:
-    """Parse the JSON object following one explicit R1c marker."""
-
-    marker_at = value.find(_R1C_MARKER)
-    if marker_at < 0:
-        return None
-    payload = value[marker_at + len(_R1C_MARKER) :].lstrip(" \t\r\n:")
-    try:
-        parsed, _end = json.JSONDecoder().raw_decode(payload)
-    except json.JSONDecodeError:
-        return None
-    return _json_object(parsed)
-
-
 def _r1c_submission_candidates(record: Mapping[str, Any]) -> tuple[str, ...]:
     """Extract submit-tool arguments before falling back to legacy log text.
 
@@ -183,54 +170,22 @@ def _r1c_submission_candidates(record: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(candidates)
 
 
-def _r1c_string_list(value: object) -> list[str] | None:
-    if not isinstance(value, list) or not value:
-        return None
-    items: list[str] = []
-    for raw_item in cast(list[Any], value):
-        if not isinstance(raw_item, str) or not raw_item.strip():
-            return None
-        items.append(raw_item.strip())
-    return items
-
-
-def _normalise_r1c_handoff(
-    value: Mapping[str, Any], *, run_manifest_digest: str, agent_release_digest: str
-) -> dict[str, Any] | None:
-    if any(field not in value for field in _R1C_REQUIRED_FIELDS):
-        return None
-    text_fields = ("symptom", "target_component", "root_cause_hypothesis", "minimal_remediation")
-    if not all(isinstance(value[field], str) and value[field].strip() for field in text_fields):
-        return None
-    target = _json_object(value.get("candidate_resource"))
-    if target != _R1C_TARGET:
-        return None
-    evidence = _r1c_string_list(value["evidence"])
-    verification_plan = _r1c_string_list(value["verification_plan"])
-    if evidence is None or verification_plan is None:
-        return None
-    document: dict[str, Any] = {
-        "schema_id": "clawgym.sregym_diagnosis_handoff.v1",
-        "status": "complete",
-        "run_manifest_digest": run_manifest_digest,
-        "agent_release_digest": agent_release_digest,
-        "stage": "diagnosis",
-        "symptom": value["symptom"].strip(),
-        "target_component": value["target_component"].strip(),
-        "evidence": evidence,
-        "root_cause_hypothesis": value["root_cause_hypothesis"].strip(),
-        "candidate_resource": dict(_R1C_TARGET),
-        "minimal_remediation": value["minimal_remediation"].strip(),
-        "verification_plan": verification_plan,
-    }
-    document["handoff_digest"] = _digest_document(document, "handoff_digest")
-    return document
-
-
 def _extract_r1c_handoff(records: tuple[dict[str, Any], ...], run: RunManifest) -> dict[str, Any]:
     release_digest = getattr(getattr(run, "agent_release", None), "agent_release_digest", "")
     found: dict[str, Any] | None = None
     for record in records:
+        if record.get("name") == "r1c-handoff.json":
+            try:
+                explicit = _json_object(json.loads(str(record.get("text", ""))))
+            except json.JSONDecodeError:
+                explicit = None
+            if explicit is not None and _validate_r1c_document(
+                explicit,
+                run_manifest_digest=run.manifest_digest,
+                agent_release_digest=release_digest,
+            ):
+                return explicit
+            continue
         for candidate in _r1c_submission_candidates(record):
             value = _r1c_marker_payload(candidate)
             if value is None:
@@ -245,25 +200,14 @@ def _extract_r1c_handoff(records: tuple[dict[str, Any], ...], run: RunManifest) 
                 break
         if found:
             break
-    if found is None:
-        document: dict[str, Any] = {
-            "schema_id": "clawgym.sregym_diagnosis_handoff.v1",
-            "status": "incomplete",
-            "run_manifest_digest": run.manifest_digest,
-            "agent_release_digest": release_digest,
-            "stage": "diagnosis",
-            "symptom": "",
-            "target_component": "",
-            "evidence": [],
-            "root_cause_hypothesis": "",
-            "candidate_resource": {"kind": "", "namespace": "", "name": ""},
-            "minimal_remediation": "",
-            "verification_plan": [],
-        }
-    else:
-        document = found
-    document["handoff_digest"] = _digest_document(document, "handoff_digest")
-    return document
+    return (
+        found
+        if found is not None
+        else _incomplete_r1c_handoff(
+            run_manifest_digest=run.manifest_digest,
+            agent_release_digest=release_digest,
+        )
+    )
 
 
 def _extract_r1d_handoff(records: tuple[dict[str, Any], ...], run: RunManifest) -> dict[str, Any]:
@@ -1133,10 +1077,13 @@ class SafeStratusRunner:
                 "r1c-structured-attribution-deepseek-v1",
             }:
                 overlay = Path(__file__).resolve().parent / "reference_driver_r1c.py"
+                protocol = Path(__file__).resolve().parent / "r1c_protocol.py"
                 image_index = command.index(image_id)
                 command[image_index:image_index] = [
                     "-v",
                     f"{overlay.resolve()}:/opt/clawgym_overlay/reference_driver_r1c.py:ro",
+                    "-v",
+                    f"{protocol.resolve()}:/opt/clawgym_overlay/r1c_protocol.py:ro",
                     "-e",
                     "PYTHONPATH=/opt/clawgym_overlay:/opt/sregym",
                 ]

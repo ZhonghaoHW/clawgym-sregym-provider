@@ -10,6 +10,7 @@ import pytest
 from clawgym.contracts import sha256_digest
 
 import clawgym_overlay.reference_runner as reference_runner
+from clawgym_overlay import r1c_protocol
 from clawgym_overlay.reference_runner import (
     ReferenceAgentSecretError,
     SafeStratusRunner,
@@ -48,9 +49,11 @@ def test_reference_secret_rejects_empty_or_symlink(tmp_path: Path) -> None:
 
 def test_safe_text_redacts_model_key_material_and_host_paths() -> None:
     safe = _safe_text(
-        b"Authorization: Bearer abcdefghijklmnop /var/run/example 10.20.1.27 i-t4nf7igf5ax6pg9s8jc1 client-key-data:"
+        b"Authorization: Bearer abcdefghijklmnop AGENT_API_KEY=not-a-real-key "
+        b"/var/run/example 10.20.1.27 i-t4nf7igf5ax6pg9s8jc1 client-key-data:"
     )
     assert "abcdefghijklmnop" not in safe
+    assert "not-a-real-key" not in safe
     assert "/var/run/example" not in safe
     assert "10.20.1.27" not in safe
     assert "i-t4nf7igf5ax6pg9s8jc1" not in safe
@@ -463,6 +466,25 @@ def test_r1c_handoff_requires_all_required_fields() -> None:
     assert result["status"] == "incomplete"
 
 
+def test_r1c_explicit_handoff_artifact_is_identity_and_digest_bound() -> None:
+    run = _fake_run()
+    document = reference_runner._normalise_r1c_handoff(
+        _handoff_fields(),
+        run_manifest_digest=run.manifest_digest,
+        agent_release_digest=run.agent_release.agent_release_digest,
+    )
+    assert document is not None
+    records = ({"name": "r1c-handoff.json", "text": json.dumps(document)},)
+    assert reference_runner._extract_r1c_handoff(records, run) == document
+    wrong_identity = dict(document, run_manifest_digest="f" * 64)
+    assert (
+        reference_runner._extract_r1c_handoff(({"name": "r1c-handoff.json", "text": json.dumps(wrong_identity)},), run)[
+            "status"
+        ]
+        == "incomplete"
+    )
+
+
 def test_gate_journal_loader_is_strict_and_identity_bound() -> None:
     run = _fake_run()
     assert reference_runner._extract_gate_event_journal((), run) is None
@@ -707,6 +729,8 @@ def test_registered_runner_variants_mount_their_pinned_protocol(
     )
     assert result.image_digest == "f" * 64
     assert calls[1][-2:] == ["-m", expected_driver]
+    if expected_driver == "reference_driver_r1c":
+        assert any("r1c_protocol.py:ro" in item for item in calls[1])
 
 
 def test_runner_rejects_missing_kubeconfig_and_unidentified_image(
@@ -763,7 +787,7 @@ def test_runner_timeout_removes_container_and_returns_terminal_execution(
 
 
 def _fake_run() -> SimpleNamespace:
-    return SimpleNamespace(manifest_digest="r" * 64, agent_release=SimpleNamespace(agent_release_digest="a" * 64))
+    return SimpleNamespace(manifest_digest="b" * 64, agent_release=SimpleNamespace(agent_release_digest="c" * 64))
 
 
 def _handoff_fields() -> dict[str, object]:
@@ -892,16 +916,10 @@ def test_r1c_handoff_extracts_nested_submit_tool_argument() -> None:
     payload = json.dumps(_handoff_fields(), separators=(",", ":"))
     event = {
         "messages": [
-            {
-                "tool_calls": [
-                    {"id": "submit-1", "name": "submit_tool", "args": {"ans": "R1C_HANDOFF_JSON " + payload}}
-                ]
-            }
+            {"tool_calls": [{"id": "submit-1", "name": "submit_tool", "args": {"ans": "R1C_HANDOFF_JSON " + payload}}]}
         ]
     }
-    parsed = reference_runner._extract_r1c_handoff(
-        ({"name": "diagnosis.jsonl", "text": json.dumps(event)},), run
-    )
+    parsed = reference_runner._extract_r1c_handoff(({"name": "diagnosis.jsonl", "text": json.dumps(event)},), run)
     assert parsed["status"] == "complete"
     assert parsed["candidate_resource"] == {
         "kind": "NetworkPolicy",
@@ -937,29 +955,24 @@ def test_r1c_submission_parser_rejects_malformed_shapes_and_accepts_function_arg
 
 @pytest.mark.parametrize("value", [[], [1], [" "]])
 def test_r1c_string_lists_are_nonempty_and_string_only(value: object) -> None:
-    assert reference_runner._r1c_string_list(value) is None
+    assert r1c_protocol.string_list(value) is None
 
 
 def test_r1c_handoff_normalizer_rejects_invalid_semantics() -> None:
     fields = _handoff_fields()
     for field in ("symptom", "target_component", "root_cause_hypothesis", "minimal_remediation"):
         invalid = dict(fields, **{field: " "})
-        assert reference_runner._normalise_r1c_handoff(invalid, run_manifest_digest="r", agent_release_digest="a") is None
+        assert r1c_protocol.normalise_payload(invalid, run_manifest_digest="r", agent_release_digest="a") is None
     for field in ("evidence", "verification_plan"):
         invalid = dict(fields, **{field: ["valid", " "]})
-        assert reference_runner._normalise_r1c_handoff(invalid, run_manifest_digest="r", agent_release_digest="a") is None
+        assert r1c_protocol.normalise_payload(invalid, run_manifest_digest="r", agent_release_digest="a") is None
     invalid_target = dict(fields, candidate_resource={"kind": "Service"})
-    assert (
-        reference_runner._normalise_r1c_handoff(invalid_target, run_manifest_digest="r", agent_release_digest="a")
-        is None
-    )
+    assert r1c_protocol.normalise_payload(invalid_target, run_manifest_digest="r", agent_release_digest="a") is None
 
 
 def test_r1e_handoff_parser_rejects_malformed_json() -> None:
     run = _fake_run()
-    result = reference_runner._extract_r1e_handoff(
-        ({"name": "log.txt", "text": "R1E_HANDOFF_JSON {malformed"},), run
-    )
+    result = reference_runner._extract_r1e_handoff(({"name": "log.txt", "text": "R1E_HANDOFF_JSON {malformed"},), run)
     assert result["status"] == "incomplete"
 
 
@@ -981,10 +994,14 @@ def test_r1b_config_mounts_rejects_existing_file_digest_mismatch(monkeypatch: py
         lambda _bundle: [dict(entries[0], sha256_digest="0" * 64)],
     )
     with pytest.raises(RuntimeError, match="file digest mismatch"):
-        _r1b_config_mounts({"sop_variant": "r1-evidence-first-bounded-v1", "config_bundle_digest": bundle["bundle_digest"]})
+        _r1b_config_mounts(
+            {"sop_variant": "r1-evidence-first-bounded-v1", "config_bundle_digest": bundle["bundle_digest"]}
+        )
 
 
-def test_materialized_config_mounts_rejects_all_boundary_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_materialized_config_mounts_rejects_all_boundary_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     profile, root = _materialized_fixture(tmp_path)
     with pytest.raises(RuntimeError, match="root is unavailable"):
         reference_runner._materialized_config_mounts(profile, root / "missing")
@@ -1019,7 +1036,9 @@ def test_materialized_config_mounts_rejects_all_boundary_failures(tmp_path: Path
         reference_runner._materialized_config_mounts(missing_directory_profile, missing_directory_root)
 
     invalid_inventory_profile, invalid_inventory_root = _materialized_fixture(tmp_path / "invalid-inventory")
-    entries = reference_runner._bundle_files(reference_runner._load_json_object(invalid_inventory_root / "config-bundle.json"))
+    entries = reference_runner._bundle_files(
+        reference_runner._load_json_object(invalid_inventory_root / "config-bundle.json")
+    )
     calls = 0
 
     def invalid_path_entries(_bundle: object) -> list[dict[str, object]]:
@@ -1060,7 +1079,9 @@ def test_materialized_config_mounts_rejects_all_boundary_failures(tmp_path: Path
     incomplete_bundle["config_bundle_digest"] = reference_runner._digest_document(
         incomplete_bundle, "config_bundle_digest"
     )
-    incomplete_bundle_path.write_text(json.dumps(incomplete_bundle, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+    incomplete_bundle_path.write_text(
+        json.dumps(incomplete_bundle, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+    )
     incomplete_profile["config_bundle_digest"] = incomplete_bundle["config_bundle_digest"]
     with pytest.raises(RuntimeError, match="configuration bundle is incomplete"):
         reference_runner._materialized_config_mounts(incomplete_profile, incomplete_root)
@@ -1109,6 +1130,7 @@ def test_receipt_parsers_reject_malformed_shapes_and_preserve_redacted_trajector
     root = tmp_path / "trajectory"
     root.mkdir()
     (root / "events.jsonl").write_bytes(b"Authorization: Bearer abcdefghijklmnop\n")
+    (root / "agent.env").write_text("AGENT_API_KEY=not-a-real-key\n", encoding="utf-8")
     (root / "nested").mkdir()
     (root / "nested" / "event.txt").write_text("/var/run/docker.sock", encoding="utf-8")
     (root / "link").symlink_to(root / "events.jsonl")
