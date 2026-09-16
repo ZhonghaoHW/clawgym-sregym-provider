@@ -31,31 +31,18 @@ from clawgym_overlay.r1c_protocol import (
     normalise_payload as _normalise_r1c_handoff,
 )
 from clawgym_overlay.r1c_protocol import (
+    redact_text as _redact_text,
+)
+from clawgym_overlay.r1c_protocol import (
     validate_document as _validate_r1c_document,
 )
 from clawgym_overlay.r1f_protocol import endpoint_result_ready, handoff_from_trajectory_records, parse_command
-
-_SENSITIVE_OUTPUT = re.compile(
-    r"(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}|"
-    r"(?:sk|ak)-[A-Za-z0-9_-]{12,}|"
-    r"\b[A-Za-z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD)[A-Za-z0-9_]*\s*=\s*[^\s]+|"
-    r"\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b|"
-    r"-----BEGIN [A-Z0-9 ]*(?:PRIVATE KEY|CERTIFICATE)-----|"
-    r"\bclient-(?:certificate|key)-data\s*:|"
-    r"\b(?:apiVersion:\s*v1\s+)?clusters\s*:|"
-    r"(?:unix://)?/var/run/docker\.sock|"
-    r"\bi-[a-z0-9]{8,}\b|"
-    r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9])",
-    re.IGNORECASE,
-)
 
 
 def _safe_text(payload: bytes) -> str:
     """Retain process evidence without persisting credentials or host paths."""
 
-    text = payload.decode("utf-8", errors="replace")
-    text = _SENSITIVE_OUTPUT.sub("[REDACTED]", text)
-    return re.sub(r"(?<![A-Za-z0-9_.-])/(?:[^\s\x00]+)", "[HOST_PATH]", text)
+    return _redact_text(payload.decode("utf-8", errors="replace"))
 
 
 def _trajectory_records(root: Path) -> tuple[dict[str, Any], ...]:

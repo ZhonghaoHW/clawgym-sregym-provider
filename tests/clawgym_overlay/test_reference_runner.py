@@ -1146,6 +1146,27 @@ def test_receipt_parsers_reject_malformed_shapes_and_preserve_redacted_trajector
         reference_runner._load_json_object(invalid)
 
 
+def test_r1c_handoff_survives_trajectory_redaction_without_digest_drift(tmp_path: Path) -> None:
+    run = _fake_run()
+    document = r1c_protocol.normalise_payload(
+        {
+            **_handoff_fields(),
+            "target_component": "recommendation pod 10.20.1.27 at /var/run/example",
+            "evidence": ["endpoint 10.20.1.27", "Bearer abcdefghijklmnop"],
+        },
+        run_manifest_digest=run.manifest_digest,
+        agent_release_digest=run.agent_release.agent_release_digest,
+    )
+    assert document is not None
+    root = tmp_path / "trajectory"
+    root.mkdir()
+    (root / "r1c-handoff.json").write_text(
+        json.dumps(document, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+    )
+    records = reference_runner._trajectory_records(root)
+    assert reference_runner._extract_r1c_handoff(records, run) == document
+
+
 def test_action_ledger_handles_pending_duplicate_unknown_and_response_classes() -> None:
     run = _fake_run()
     records = (

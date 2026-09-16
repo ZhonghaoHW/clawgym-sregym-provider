@@ -34,6 +34,17 @@ def test_r1c_protocol_normalises_and_validates_one_canonical_document() -> None:
     assert validate_document(document, run_manifest_digest=RUN, agent_release_digest=RELEASE)
 
 
+def test_r1c_protocol_redacts_before_digest_and_preserves_collected_validation() -> None:
+    payload = _payload()
+    payload["target_component"] = "recommendation pod 10.20.1.27 at /var/run/example"
+    payload["evidence"] = ["Authorization: Bearer abcdefghijklmnop", "endpoint 10.20.1.27"]
+    document = normalise_payload(payload, run_manifest_digest=RUN, agent_release_digest=RELEASE)
+    assert document is not None
+    assert "10.20.1.27" not in document["target_component"]
+    assert "abcdefghijklmnop" not in document["evidence"][0]
+    assert validate_document(document, run_manifest_digest=RUN, agent_release_digest=RELEASE)
+
+
 def test_r1c_protocol_rejects_unknown_fields_identity_drift_and_wrong_target() -> None:
     extra = dict(_payload(), unknown="must reject")
     assert normalise_payload(extra, run_manifest_digest=RUN, agent_release_digest=RELEASE) is None

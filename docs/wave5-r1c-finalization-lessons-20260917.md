@@ -53,3 +53,22 @@ submission boundary.
 The failed ECS identity remains immutable and is not retried. A new Provider
 revision, release identity, packet and run identity are required before the
 next Reference sentinel.
+
+## Follow-up failure and root correction
+
+The first post-fix R1c run produced a complete handoff inside the agent
+container but the host projected it as incomplete. The handoff digest covered
+the original JSON, while host trajectory collection redacted IP addresses and
+paths before validating that digest. The host therefore rejected its own safe
+projection, correctly blocking the Oracle but incorrectly losing a valid
+handoff.
+
+R1c now applies the same deterministic redaction while normalising the
+model-provided handoff, before calculating its canonical digest. The host
+collector reuses that redaction function for trajectory projection. This keeps
+credentials, infrastructure identifiers and host paths out of released
+evidence without changing signed bytes between producer and consumer.
+
+The regression suite includes a sensitive handoff that passes through
+trajectory collection and is still accepted with the same identity-bound
+digest. A new ECS run identity is required; the failed run remains immutable.

@@ -57,6 +57,7 @@
     "docs/wp85-recipe-qualification.md",
     "docs/wave2-tool-grant.md",
     "docs/wave3-local-projection-status.md",
+    "docs/wave5-r1c-finalization-lessons-20260917.md",
     "quality_scope.v1.json",
     "schemas/agent_evolution.quality_scope.v1.schema.json",
     "tools/check_coverage.py",
