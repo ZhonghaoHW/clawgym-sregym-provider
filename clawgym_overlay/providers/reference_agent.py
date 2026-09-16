@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from clawgym.contracts import RunManifest, sha256_digest
 from clawgym.providers import AgentInvocationResult, EvidencePayload, LifecycleOutcome
@@ -41,6 +41,30 @@ class ReferenceAgentExecution:
             raise ValueError("reference transcript digest must be SHA-256")
         if self.image_digest and len(self.image_digest) != 64:
             raise ValueError("reference image digest must be SHA-256")
+
+
+def _completion_failure_reason(execution: ReferenceAgentExecution) -> str | None:
+    """Return a host-verifiable failure when a bounded agent transaction is incomplete.
+
+    A zero process exit only proves that the container stopped normally.  For
+    profiles that emit a remediation transaction or gate journal, the adapter
+    must also prove that the host-owned mutation protocol reached its final
+    state before allowing the lifecycle to invoke the Oracle.
+    """
+
+    if execution.exit_code != 0:
+        return "process_exit_nonzero"
+    transaction = execution.remediation_transaction
+    if transaction is not None and transaction.get("status") != "executed":
+        return "remediation_transaction_incomplete"
+    journal = execution.gate_event_journal
+    if journal is not None:
+        state = journal.get("state")
+        if not isinstance(state, Mapping):
+            return "remediation_gate_incomplete"
+        if cast(Mapping[str, Any], state).get("may_submit") is not True:
+            return "remediation_gate_incomplete"
+    return None
 
 
 @dataclass(slots=True)
@@ -79,7 +103,8 @@ class SREGymReferenceAgentAdapter:
         )
         duration_ms = max(execution.duration_ms, int((time.monotonic() - started) * 1000))
         completed_at = self.clock()
-        status = "succeeded" if execution.exit_code == 0 else "failed"
+        completion_failure_reason = _completion_failure_reason(execution)
+        status = "succeeded" if completion_failure_reason is None else "failed"
         transcript_digest = execution.transcript_digest or sha256_digest(
             {"run": run_manifest.manifest_digest, "empty_transcript": True}
         )
@@ -91,6 +116,8 @@ class SREGymReferenceAgentAdapter:
             "container_timeout_seconds": execution.timeout_seconds,
             "mitigation_probe_healthy": mitigation_healthy,
             "telemetry_window": telemetry,
+            "completion_validated": completion_failure_reason is None,
+            "completion_failure_reason": completion_failure_reason,
         }
         evidence = [
             EvidencePayload(
@@ -182,7 +209,7 @@ class SREGymReferenceAgentAdapter:
                 completed_at=completed_at,
                 evidence=tuple(evidence),
             ),
-            submission=execution.submission,
+            submission=execution.submission if status == "succeeded" else None,
             amount=execution.amount,
             currency=execution.currency,
             duration_ms=duration_ms,

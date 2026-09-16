@@ -273,28 +273,73 @@ def handoff_from_trajectory_records(
     return incomplete_handoff(run_manifest_digest=run_manifest_digest, agent_release_digest=agent_release_digest)
 
 
+def _canonical_kubectl_tokens(tokens: tuple[str, ...]) -> tuple[str, ...] | None:
+    """Normalize the namespace flag without widening the command authority.
+
+    ``kubectl`` accepts namespace placement both before the verb (the form
+    emitted by the live Stratus tool) and after the resource.  The old gate
+    only recognized the latter, so a valid command was recorded as
+    ``unknown`` and could never satisfy the transaction.  Only the explicit
+    namespace spellings are normalized here; all other flags and arguments
+    remain byte-for-byte represented as tokens and are still subject to the
+    exact-delete check below.
+    """
+
+    if not tokens or tokens[0] != "kubectl":
+        return None
+    canonical = ["kubectl"]
+    namespaces: list[str] = []
+    index = 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token in {"-n", "--namespace"}:
+            if index + 1 >= len(tokens) or tokens[index + 1].startswith("-"):
+                return None
+            namespaces.append(tokens[index + 1])
+            index += 2
+            continue
+        if token.startswith("--namespace="):
+            namespace = token.partition("=")[2]
+            if not namespace or namespace.startswith("-"):
+                return None
+            namespaces.append(namespace)
+            index += 1
+            continue
+        canonical.append(token)
+        index += 1
+    if len(set(namespaces)) > 1:
+        return None
+    if namespaces:
+        canonical.extend(("-n", namespaces[0]))
+    return tuple(canonical)
+
+
 def parse_command(command: str) -> tuple[str, dict[str, str], tuple[str, ...]]:
-    """Classify a simple kubectl command and reject shell composition."""
+    """Classify one shell-free kubectl command with canonical namespace order."""
 
     if any(token in command for token in (";", "&&", "||", "|", ">", "<", "`", "$(", "\n")):
         return "unknown", {"kind": "", "namespace": "", "name": ""}, ()
     try:
-        tokens = tuple(shlex.split(command))
+        raw_tokens = tuple(shlex.split(command))
     except ValueError:
         return "unknown", {"kind": "", "namespace": "", "name": ""}, ()
-    if len(tokens) < 2 or tokens[0] != "kubectl":
+    tokens = _canonical_kubectl_tokens(raw_tokens)
+    if tokens is None:
+        return "unknown", {"kind": "", "namespace": "", "name": ""}, raw_tokens
+    if len(tokens) < 2:
         return "unknown", {"kind": "", "namespace": "", "name": ""}, tokens
     verb = tokens[1]
     operation = "read" if verb in {"get", "describe", "logs"} else "mutate" if verb == "delete" else "unknown"
-    kind = tokens[2] if len(tokens) > 2 else ""
+    raw_kind = tokens[2] if len(tokens) > 2 else ""
     name = tokens[3] if len(tokens) > 3 and not tokens[3].startswith("-") else ""
-    if kind in {"netpol", "networkpolicy", "networkpolicies"}:
+    kind = raw_kind
+    if raw_kind.lower() in {"netpol", "networkpolicy", "networkpolicies"}:
         kind = "NetworkPolicy"
-    elif kind in {"endpoint", "endpoints", "ep"}:
+    elif raw_kind.lower() in {"endpoint", "endpoints", "ep"}:
         kind = "Endpoints"
     namespace = ""
     for index, token in enumerate(tokens):
-        if token in {"-n", "--namespace"} and index + 1 < len(tokens):
+        if token == "-n" and index + 1 < len(tokens):
             namespace = tokens[index + 1]
     return operation, {"kind": kind, "namespace": namespace, "name": name}, tokens
 

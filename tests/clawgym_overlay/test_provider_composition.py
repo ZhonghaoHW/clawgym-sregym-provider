@@ -786,6 +786,35 @@ def test_reference_adapter_captures_host_owned_mitigation_window() -> None:
     assert summary["telemetry_window"]["window"] == "mitigation"
 
 
+def test_reference_adapter_rejects_incomplete_transaction_after_zero_exit() -> None:
+    adapter = SREGymReferenceAgentAdapter(
+        sha256_digest({"adapter": "reference-incomplete-transaction"}),
+        lambda run, kubeconfig: ReferenceAgentExecution(
+            exit_code=0,
+            submission={"agent_claimed_verdict": "pass"},
+            duration_ms=1,
+            transcript_digest="a" * 64,
+            image_digest="b" * 64,
+            remediation_transaction={
+                "schema_id": "clawgym.sregym_remediation_transaction.v2",
+                "status": "incomplete",
+            },
+            gate_event_journal={"state": {"may_submit": False}},
+        ),
+        clock=lambda: NOW,
+    )
+    result = adapter.invoke(
+        SimpleNamespace(lane="agent_validation", manifest_digest="a" * 64),
+        _SREGymAccessHandle("k"),
+    )
+
+    assert result.outcome.status == "failed"
+    assert result.submission is None
+    summary = result.outcome.evidence[0].document["summary"]
+    assert summary["completion_validated"] is False
+    assert summary["completion_failure_reason"] == "remediation_transaction_incomplete"
+
+
 def test_agent_runtime_revision_is_independent_from_provider_environment_release() -> None:
     verify_release_revisions(
         {"runtime_reference": {"kind": "source_revision", "reference": "a" * 40}},

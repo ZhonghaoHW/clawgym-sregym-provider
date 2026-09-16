@@ -18,7 +18,7 @@ from clawgym.contracts import RunManifest
 
 from clawgym_overlay.compatibility_registry import target_resource, validate_legacy_handoff
 from clawgym_overlay.providers.reference_agent import ReferenceAgentExecution
-from clawgym_overlay.r1f_protocol import endpoint_result_ready, handoff_from_trajectory_records
+from clawgym_overlay.r1f_protocol import endpoint_result_ready, handoff_from_trajectory_records, parse_command
 
 _SENSITIVE_OUTPUT = re.compile(
     r"(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}|"
@@ -591,30 +591,11 @@ def _extract_action_ledger(
                             args = {}
                     args_object = _json_object(args)
                     command = str(args_object.get("command", "")) if args_object is not None else ""
-                    lower = command.lower()
                     if "submit_tool" in tool or tool in {"f_submit_tool", "manual_submit_tool"}:
                         operation = "submit"
-                    elif (
-                        lower.startswith("kubectl get")
-                        or lower.startswith("kubectl describe")
-                        or lower.startswith("kubectl logs")
-                        or lower.startswith("kubectl get")
-                    ):
-                        operation = "read"
-                    elif any(
-                        lower.startswith("kubectl " + verb)
-                        for verb in ("apply", "patch", "delete", "replace", "create", "edit", "rollout", "scale", "set")
-                    ):
-                        operation = "mutate"
+                        resource = {"kind": "", "namespace": "", "name": ""}
                     else:
-                        operation = "unknown"
-                    resource = {"kind": "", "namespace": "", "name": ""}
-                    match = re.search(r"(?:networkpolicy|netpol)\s+([A-Za-z0-9_.-]+)", lower)
-                    if match:
-                        resource["kind"], resource["name"] = "NetworkPolicy", match.group(1)
-                    ns = re.search(r"(?:-n|--namespace)\s+([A-Za-z0-9_.-]+)", lower)
-                    if ns:
-                        resource["namespace"] = ns.group(1)
+                        operation, resource, _ = parse_command(command)
                     events[call_id] = {
                         "stage": "mitigation" if "mitigation" in str(record.get("name", "")) else "diagnosis",
                         "tool": tool,

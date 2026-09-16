@@ -11,8 +11,10 @@ from clawgym_overlay.r1f_protocol import (
     R1fGate,
     endpoint_result_ready,
     handoff_from_trajectory_records,
+    is_exact_delete,
     normalise_handoff_submission,
     normalise_handoff_tool_argument,
+    parse_command,
 )
 
 RUN = "a" * 64
@@ -143,6 +145,47 @@ def test_gate_requires_exact_single_delete_and_verification() -> None:
         stage="mitigation",
     )
     assert gate.may_submit
+
+
+def test_command_parser_accepts_namespace_before_verb_and_canonicalizes_delete() -> None:
+    operation, resource, tokens = parse_command(
+        "kubectl -n hotel-reservation get networkpolicy deny-all-recommendation -o yaml"
+    )
+    assert operation == "read"
+    assert resource == {
+        "kind": "NetworkPolicy",
+        "namespace": "hotel-reservation",
+        "name": "deny-all-recommendation",
+    }
+    assert tokens == (
+        "kubectl",
+        "get",
+        "networkpolicy",
+        "deny-all-recommendation",
+        "-o",
+        "yaml",
+        "-n",
+        "hotel-reservation",
+    )
+
+    delete_operation, delete_resource, delete_tokens = parse_command(
+        "kubectl --namespace=hotel-reservation delete networkpolicy deny-all-recommendation"
+    )
+    assert delete_operation == "mutate"
+    assert delete_resource == {
+        "kind": "NetworkPolicy",
+        "namespace": "hotel-reservation",
+        "name": "deny-all-recommendation",
+    }
+    assert delete_tokens == (
+        "kubectl",
+        "delete",
+        "networkpolicy",
+        "deny-all-recommendation",
+        "-n",
+        "hotel-reservation",
+    )
+    assert is_exact_delete(delete_tokens)
 
 
 def test_endpoint_ready_parser_accepts_sanitized_table_and_rejects_empty() -> None:

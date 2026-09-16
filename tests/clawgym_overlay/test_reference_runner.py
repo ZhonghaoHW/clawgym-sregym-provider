@@ -590,6 +590,48 @@ def test_action_ledger_classifies_not_found_and_ready_responses() -> None:
     assert "not_found" in summaries and "ready" in summaries
 
 
+def test_action_ledger_classifies_namespace_before_verb_commands() -> None:
+    run = _fake_run()
+    event = {
+        "messages": [
+            {
+                "tool_calls": [
+                    {
+                        "id": "read-before-verb",
+                        "name": "kubectl",
+                        "args": {
+                            "command": "kubectl -n hotel-reservation get networkpolicy deny-all-recommendation -o yaml"
+                        },
+                    },
+                    {
+                        "id": "mutate-before-verb",
+                        "name": "kubectl",
+                        "args": {
+                            "command": "kubectl -n hotel-reservation delete networkpolicy deny-all-recommendation"
+                        },
+                    },
+                ]
+            },
+            {"tool_call_id": "read-before-verb", "content": "policy present"},
+            {"tool_call_id": "mutate-before-verb", "content": "deleted"},
+        ]
+    }
+    ledger = reference_runner._extract_action_ledger(({"name": "mitigation.jsonl", "text": json.dumps(event)},), run)
+    assert ledger["summary"] == {
+        "total": 2,
+        "read": 1,
+        "mutate": 1,
+        "submit": 0,
+        "unknown": 0,
+        "executed_mutations": 1,
+    }
+    assert ledger["records"][0]["resource"] == {
+        "kind": "NetworkPolicy",
+        "namespace": "hotel-reservation",
+        "name": "deny-all-recommendation",
+    }
+
+
 def test_materialized_runner_requires_bundle_when_variant_is_materialized(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
