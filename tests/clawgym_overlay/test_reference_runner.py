@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -198,8 +199,6 @@ def test_materialized_runner_mounts_explicit_bundle_and_reference_driver(
                 "bytes": len(content),
             }
         )
-    import hashlib
-
     config = {
         "schema_id": "clawgym.sregym_reference_agent_config_bundle.v2",
         "component_bundle_digest": "a" * 64,
@@ -345,7 +344,7 @@ def test_fixed_config_loaders_fail_closed_on_variant_or_bundle_digest(loader, va
     ("loader", "variant", "bundle_name", "expected_files"),
     [
         (_r1b_config_mounts, "r1-evidence-first-bounded-v1", "agent.reference-stratus-r1b.config-bundle.v1.json", 2),
-        (_r1c_config_mounts, "r1c-structured-attribution-v1", "agent.reference-stratus-r1c.config-bundle.v1.json", 2),
+        (_r1c_config_mounts, "r1c-structured-attribution-v1", "agent.reference-stratus-r1c.config-bundle.v1.json", 4),
         (_r1d_config_mounts, "r1d-typed-remediation-v1", "agent.reference-stratus-r1d.config-bundle.v1.json", 4),
         (_r1e_config_mounts, "r1e-runtime-gated-v1", "agent.reference-stratus-r1e.config-bundle.v1.json", 4),
         (
@@ -383,6 +382,17 @@ def test_fixed_config_loaders_reject_missing_files_and_wrong_inventory(
     with pytest.raises(RuntimeError, match="incomplete"):
         loader(profile)
     assert len(original_files) == expected_files
+
+
+def test_r1c_bundle_mounts_matching_prompt_files() -> None:
+    root = Path(reference_runner.__file__).resolve().parent / "manifests"
+    bundle = reference_runner._load_json_object(root / "agent.reference-stratus-r1c.config-bundle.v1.json")
+    mounts = _r1c_config_mounts(
+        {"sop_variant": "r1c-structured-attribution-v1", "config_bundle_digest": bundle["bundle_digest"]}
+    )
+    assert len(mounts) == 4
+    assert any("diagnosis_agent_prompts.yaml:ro" in mount for mount in mounts)
+    assert any("mitigation_agent_prompts.yaml:ro" in mount for mount in mounts)
 
 
 def test_r1i_runner_mounts_typed_handoff_journal_configuration(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -840,10 +850,7 @@ def test_handoff_replay_rejects_malformed_variants_and_identity_drift() -> None:
         ),
         run,
     )
-    assert parsed["status"] == "complete"
-    assert parsed["candidate_resource"] == {"kind": "", "namespace": "", "name": ""}
-    assert parsed["evidence"] == []
-    assert parsed["verification_plan"] == []
+    assert parsed["status"] == "incomplete"
 
     invalid_r1d = dict(fields, status="complete", candidate_resource={"kind": "Service"})
     invalid_r1d.update(
@@ -878,6 +885,185 @@ def test_handoff_replay_rejects_malformed_variants_and_identity_drift() -> None:
         )
         is None
     )
+
+
+def test_r1c_handoff_extracts_nested_submit_tool_argument() -> None:
+    run = _fake_run()
+    payload = json.dumps(_handoff_fields(), separators=(",", ":"))
+    event = {
+        "messages": [
+            {
+                "tool_calls": [
+                    {"id": "submit-1", "name": "submit_tool", "args": {"ans": "R1C_HANDOFF_JSON " + payload}}
+                ]
+            }
+        ]
+    }
+    parsed = reference_runner._extract_r1c_handoff(
+        ({"name": "diagnosis.jsonl", "text": json.dumps(event)},), run
+    )
+    assert parsed["status"] == "complete"
+    assert parsed["candidate_resource"] == {
+        "kind": "NetworkPolicy",
+        "namespace": "hotel-reservation",
+        "name": "deny-all-recommendation",
+    }
+    assert parsed["evidence"] == ["endpoint unhealthy"]
+
+
+def test_r1c_submission_parser_rejects_malformed_shapes_and_accepts_function_arguments() -> None:
+    payload = json.dumps(_handoff_fields(), separators=(",", ":"))
+    marker = "R1C_HANDOFF_JSON " + payload
+    assert reference_runner._r1c_marker_payload("no explicit handoff") is None
+    assert reference_runner._r1c_submission_candidates({"text": json.dumps({"messages": {}})}) == ()
+    event = {
+        "messages": [
+            "not an object",
+            {"tool_calls": "not a list"},
+            {
+                "tool_calls": [
+                    "not an object",
+                    {"name": "other", "args": {}},
+                    {"name": "submit_tool", "args": "not-json"},
+                    {"name": "submit_tool", "args": {"ans": 42}},
+                    {"function": {"name": "submit_tool", "arguments": json.dumps({"ans": marker})}},
+                ]
+            },
+        ]
+    }
+    candidates = reference_runner._r1c_submission_candidates({"text": json.dumps(event)})
+    assert candidates == (marker, json.dumps(event))
+
+
+@pytest.mark.parametrize("value", [[], [1], [" "]])
+def test_r1c_string_lists_are_nonempty_and_string_only(value: object) -> None:
+    assert reference_runner._r1c_string_list(value) is None
+
+
+def test_r1c_handoff_normalizer_rejects_invalid_semantics() -> None:
+    fields = _handoff_fields()
+    for field in ("symptom", "target_component", "root_cause_hypothesis", "minimal_remediation"):
+        invalid = dict(fields, **{field: " "})
+        assert reference_runner._normalise_r1c_handoff(invalid, run_manifest_digest="r", agent_release_digest="a") is None
+    for field in ("evidence", "verification_plan"):
+        invalid = dict(fields, **{field: ["valid", " "]})
+        assert reference_runner._normalise_r1c_handoff(invalid, run_manifest_digest="r", agent_release_digest="a") is None
+    invalid_target = dict(fields, candidate_resource={"kind": "Service"})
+    assert (
+        reference_runner._normalise_r1c_handoff(invalid_target, run_manifest_digest="r", agent_release_digest="a")
+        is None
+    )
+
+
+def test_r1e_handoff_parser_rejects_malformed_json() -> None:
+    run = _fake_run()
+    result = reference_runner._extract_r1e_handoff(
+        ({"name": "log.txt", "text": "R1E_HANDOFF_JSON {malformed"},), run
+    )
+    assert result["status"] == "incomplete"
+
+
+def test_r1e_verification_ignores_unrelated_reads() -> None:
+    run = _fake_run()
+    result = reference_runner._r1e_verification_observation(
+        {"records": [{"operation": "read", "resource": {"kind": "Pod", "name": "other"}}]}, run
+    )
+    assert result["observations"] == []
+
+
+def test_r1b_config_mounts_rejects_existing_file_digest_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    root = Path(reference_runner.__file__).resolve().parent / "manifests"
+    bundle = reference_runner._load_json_object(root / "agent.reference-stratus-r1b.config-bundle.v1.json")
+    entries = reference_runner._bundle_files(bundle)
+    monkeypatch.setattr(
+        reference_runner,
+        "_bundle_files",
+        lambda _bundle: [dict(entries[0], sha256_digest="0" * 64)],
+    )
+    with pytest.raises(RuntimeError, match="file digest mismatch"):
+        _r1b_config_mounts({"sop_variant": "r1-evidence-first-bounded-v1", "config_bundle_digest": bundle["bundle_digest"]})
+
+
+def test_materialized_config_mounts_rejects_all_boundary_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    profile, root = _materialized_fixture(tmp_path)
+    with pytest.raises(RuntimeError, match="root is unavailable"):
+        reference_runner._materialized_config_mounts(profile, root / "missing")
+
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to(root, target_is_directory=True)
+    with pytest.raises(RuntimeError, match="root is unavailable"):
+        reference_runner._materialized_config_mounts(profile, linked_root)
+
+    missing_config = tmp_path / "missing-config"
+    (missing_config / "reference-materialized").mkdir(parents=True)
+    with pytest.raises(RuntimeError, match="config bundle is unavailable"):
+        reference_runner._materialized_config_mounts(profile, missing_config)
+
+    linked_config = tmp_path / "linked-config"
+    (linked_config / "reference-materialized").mkdir(parents=True)
+    source_config = linked_config / "source.json"
+    source_config.write_text((root / "config-bundle.json").read_text(encoding="utf-8"), encoding="utf-8")
+    (linked_config / "config-bundle.json").symlink_to(source_config)
+    with pytest.raises(RuntimeError, match="config bundle is unavailable"):
+        reference_runner._materialized_config_mounts(profile, linked_config)
+
+    bad_digest_profile, bad_digest_root = _materialized_fixture(tmp_path / "bad-digest")
+    bad_digest_profile["config_bundle_digest"] = "0" * 64
+    with pytest.raises(RuntimeError, match="bundle digest mismatch"):
+        reference_runner._materialized_config_mounts(bad_digest_profile, bad_digest_root)
+
+    missing_directory_profile, missing_directory_root = _materialized_fixture(tmp_path / "missing-directory")
+    files_root = missing_directory_root / "reference-materialized"
+    files_root.rename(missing_directory_root / "moved")
+    with pytest.raises(RuntimeError, match="configuration directory is unavailable"):
+        reference_runner._materialized_config_mounts(missing_directory_profile, missing_directory_root)
+
+    invalid_inventory_profile, invalid_inventory_root = _materialized_fixture(tmp_path / "invalid-inventory")
+    entries = reference_runner._bundle_files(reference_runner._load_json_object(invalid_inventory_root / "config-bundle.json"))
+    calls = 0
+
+    def invalid_path_entries(_bundle: object) -> list[dict[str, object]]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return entries
+        return [dict(entries[0], path="outside/name"), *entries[1:]]
+
+    monkeypatch.setattr(reference_runner, "_bundle_files", invalid_path_entries)
+    with pytest.raises(RuntimeError, match="configuration path is invalid"):
+        reference_runner._materialized_config_mounts(invalid_inventory_profile, invalid_inventory_root)
+    monkeypatch.undo()
+
+    traversal_profile, traversal_root = _materialized_fixture(tmp_path / "traversal")
+    traversal_entries = reference_runner._bundle_files(
+        reference_runner._load_json_object(traversal_root / "config-bundle.json")
+    )
+    calls = 0
+
+    def traversal_entries_after_inventory(_bundle: object) -> list[dict[str, object]]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return traversal_entries
+        return [dict(traversal_entries[0], path="reference-materialized/../config-bundle.json"), *traversal_entries[1:]]
+
+    monkeypatch.setattr(reference_runner, "_bundle_files", traversal_entries_after_inventory)
+    with pytest.raises(RuntimeError, match="configuration file is invalid"):
+        reference_runner._materialized_config_mounts(traversal_profile, traversal_root)
+    monkeypatch.undo()
+
+    incomplete_profile, incomplete_root = _materialized_fixture(tmp_path / "incomplete")
+    incomplete_bundle_path = incomplete_root / "config-bundle.json"
+    incomplete_bundle = reference_runner._load_json_object(incomplete_bundle_path)
+    removed = incomplete_bundle["files"].pop()
+    (incomplete_root / removed["path"]).unlink()
+    incomplete_bundle["config_bundle_digest"] = reference_runner._digest_document(
+        incomplete_bundle, "config_bundle_digest"
+    )
+    incomplete_bundle_path.write_text(json.dumps(incomplete_bundle, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+    incomplete_profile["config_bundle_digest"] = incomplete_bundle["config_bundle_digest"]
+    with pytest.raises(RuntimeError, match="configuration bundle is incomplete"):
+        reference_runner._materialized_config_mounts(incomplete_profile, incomplete_root)
 
 
 def test_action_ledger_and_transaction_projection_cover_success_and_failures() -> None:

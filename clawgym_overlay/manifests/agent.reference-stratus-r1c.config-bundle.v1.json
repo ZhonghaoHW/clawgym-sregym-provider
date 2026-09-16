@@ -7,10 +7,20 @@
       "sha256_digest": "0c46b4ab3945d173dc03d9a2fbae1b00b33f01e44fbbdb252076be057b7338c8"
     },
     {
+      "path": "reference-r1c/diagnosis_agent_prompts.yaml",
+      "container_path": "/opt/sregym/clients/stratus/configs/diagnosis_agent_prompts.yaml",
+      "sha256_digest": "dcea88608554241c0310c82f0ec8632067e9cccfbe4127bcff41c05902ca05d3"
+    },
+    {
       "path": "reference-r1c/mitigation_agent_config.yaml",
       "container_path": "/opt/sregym/clients/stratus/configs/mitigation_agent_config.yaml",
       "sha256_digest": "ecfdddb957c98be484a36ca0593bd01ecc966cec8c7bb6a49442e38b2a901d22"
+    },
+    {
+      "path": "reference-r1c/mitigation_agent_prompts.yaml",
+      "container_path": "/opt/sregym/clients/stratus/configs/mitigation_agent_prompts.yaml",
+      "sha256_digest": "36e3c2bb14ffda706afc0608d9bc9d54c45064c1ce03cb30a91924b3aba66d63"
     }
   ],
-  "bundle_digest": "0b2fc48d4638b76b37226456627d09c4283b59153924b254e8c4346a60eb023d"
+  "bundle_digest": "9afb963d1e302f02548467161ad168a53b0e7e0d347fe5b6f343000c213cf08d"
 }

@@ -1,0 +1,28 @@
+system: |
+  You are the mitigation agent.  Use the host-validated diagnosis and the
+  bounded tools to repair exactly the diagnosed fault.
+
+  For this run, execute only this sequence: read the target
+  NetworkPolicy/hotel-reservation/deny-all-recommendation, delete it once,
+  reread it until NotFound, read Endpoints/recommendation in the
+  hotel-reservation namespace, and call f_submit_tool only after the endpoint
+  has a ready address on port 8085.  Do not mutate any other resource,
+  namespace, or setting.  Do not submit early.
+
+user: |
+  Application: {app_name}
+  Description: {app_description}
+  Namespace: {app_namespace}
+
+  Validated diagnosis handoff:
+  {faults_info}
+
+  Use at most {max_step} rounds.  Complete the exact read-delete-reread-
+  endpoint-verification sequence above, then call f_submit_tool.
+
+retry_user: |
+  Continue the same bounded transaction after rollback.  The last validation
+  result was: {last_result}
+  Reflection: {reflection}
+  Re-read the target and perform only the permitted sequence.  Call
+  f_submit_tool only after every verification succeeds.

@@ -103,30 +103,145 @@ def _docker_mount_args(mounts: list[str]) -> list[str]:
     return args
 
 
+_R1C_MARKER = "R1C_HANDOFF_JSON"
+_R1C_TARGET = {
+    "kind": "NetworkPolicy",
+    "namespace": "hotel-reservation",
+    "name": "deny-all-recommendation",
+}
+_R1C_REQUIRED_FIELDS = (
+    "symptom",
+    "target_component",
+    "evidence",
+    "root_cause_hypothesis",
+    "candidate_resource",
+    "minimal_remediation",
+    "verification_plan",
+)
+
+
+def _r1c_marker_payload(value: str) -> dict[str, Any] | None:
+    """Parse the JSON object following one explicit R1c marker."""
+
+    marker_at = value.find(_R1C_MARKER)
+    if marker_at < 0:
+        return None
+    payload = value[marker_at + len(_R1C_MARKER) :].lstrip(" \t\r\n:")
+    try:
+        parsed, _end = json.JSONDecoder().raw_decode(payload)
+    except json.JSONDecodeError:
+        return None
+    return _json_object(parsed)
+
+
+def _r1c_submission_candidates(record: Mapping[str, Any]) -> tuple[str, ...]:
+    """Extract submit-tool arguments before falling back to legacy log text.
+
+    Trajectory JSONL escapes the JSON nested in ``submit_tool.args.ans``.  The
+    old line splitter attempted to parse those backslash-escaped bytes
+    directly, so a valid model tool call was silently downgraded to an
+    incomplete handoff.  Decode the event envelope first, then parse the
+    unescaped argument.
+    """
+
+    text = str(record.get("text", ""))
+    candidates: list[str] = []
+    try:
+        event = _json_object(json.loads(text))
+    except (json.JSONDecodeError, TypeError):
+        event = None
+    if event is not None:
+        messages = event.get("messages", event)
+        if isinstance(messages, list):
+            for raw_message in cast(list[Any], messages):
+                message = _json_object(raw_message)
+                if message is None:
+                    continue
+                raw_calls = message.get("tool_calls", [])
+                if not isinstance(raw_calls, list):
+                    continue
+                for raw_call in cast(list[Any], raw_calls):
+                    call = _json_object(raw_call)
+                    if call is None:
+                        continue
+                    function = _json_object(call.get("function")) or {}
+                    name = str(call.get("name", function.get("name", "")))
+                    if name != "submit_tool":
+                        continue
+                    arguments: Any = call.get("args", function.get("arguments", {}))
+                    if isinstance(arguments, str):
+                        try:
+                            arguments = json.loads(arguments)
+                        except json.JSONDecodeError:
+                            continue
+                    arguments_object = _json_object(arguments)
+                    answer = arguments_object.get("ans") if arguments_object is not None else None
+                    if isinstance(answer, str):
+                        candidates.append(answer)
+    if _R1C_MARKER in text:
+        candidates.append(text)
+    return tuple(candidates)
+
+
+def _r1c_string_list(value: object) -> list[str] | None:
+    if not isinstance(value, list) or not value:
+        return None
+    items: list[str] = []
+    for raw_item in cast(list[Any], value):
+        if not isinstance(raw_item, str) or not raw_item.strip():
+            return None
+        items.append(raw_item.strip())
+    return items
+
+
+def _normalise_r1c_handoff(
+    value: Mapping[str, Any], *, run_manifest_digest: str, agent_release_digest: str
+) -> dict[str, Any] | None:
+    if any(field not in value for field in _R1C_REQUIRED_FIELDS):
+        return None
+    text_fields = ("symptom", "target_component", "root_cause_hypothesis", "minimal_remediation")
+    if not all(isinstance(value[field], str) and value[field].strip() for field in text_fields):
+        return None
+    target = _json_object(value.get("candidate_resource"))
+    if target != _R1C_TARGET:
+        return None
+    evidence = _r1c_string_list(value["evidence"])
+    verification_plan = _r1c_string_list(value["verification_plan"])
+    if evidence is None or verification_plan is None:
+        return None
+    document: dict[str, Any] = {
+        "schema_id": "clawgym.sregym_diagnosis_handoff.v1",
+        "status": "complete",
+        "run_manifest_digest": run_manifest_digest,
+        "agent_release_digest": agent_release_digest,
+        "stage": "diagnosis",
+        "symptom": value["symptom"].strip(),
+        "target_component": value["target_component"].strip(),
+        "evidence": evidence,
+        "root_cause_hypothesis": value["root_cause_hypothesis"].strip(),
+        "candidate_resource": dict(_R1C_TARGET),
+        "minimal_remediation": value["minimal_remediation"].strip(),
+        "verification_plan": verification_plan,
+    }
+    document["handoff_digest"] = _digest_document(document, "handoff_digest")
+    return document
+
+
 def _extract_r1c_handoff(records: tuple[dict[str, Any], ...], run: RunManifest) -> dict[str, Any]:
     release_digest = getattr(getattr(run, "agent_release", None), "agent_release_digest", "")
-    required = (
-        "symptom",
-        "target_component",
-        "evidence",
-        "root_cause_hypothesis",
-        "candidate_resource",
-        "minimal_remediation",
-        "verification_plan",
-    )
     found: dict[str, Any] | None = None
     for record in records:
-        text = str(record.get("text", ""))
-        for line in reversed(text.splitlines()):
-            if "R1C_HANDOFF_JSON" not in line and "submit_tool" not in line:
+        for candidate in _r1c_submission_candidates(record):
+            value = _r1c_marker_payload(candidate)
+            if value is None:
                 continue
-            candidate = line.split("R1C_HANDOFF_JSON", 1)[-1].lstrip(" :")
-            try:
-                value: Any = json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(value, dict) and all(key in value for key in required):
-                found = cast(dict[str, Any], value)
+            normalized = _normalise_r1c_handoff(
+                value,
+                run_manifest_digest=run.manifest_digest,
+                agent_release_digest=release_digest,
+            )
+            if normalized is not None:
+                found = normalized
                 break
         if found:
             break
@@ -146,31 +261,7 @@ def _extract_r1c_handoff(records: tuple[dict[str, Any], ...], run: RunManifest) 
             "verification_plan": [],
         }
     else:
-        resource: dict[str, Any] = (
-            cast(dict[str, Any], found.get("candidate_resource"))
-            if isinstance(found.get("candidate_resource"), dict)
-            else {}
-        )
-        document: dict[str, Any] = {
-            "schema_id": "clawgym.sregym_diagnosis_handoff.v1",
-            "status": "complete",
-            "run_manifest_digest": run.manifest_digest,
-            "agent_release_digest": release_digest,
-            "stage": "diagnosis",
-            "symptom": str(found.get("symptom", "")),
-            "target_component": str(found.get("target_component", "")),
-            "evidence": found.get("evidence", []) if isinstance(found.get("evidence"), list) else [],
-            "root_cause_hypothesis": str(found.get("root_cause_hypothesis", "")),
-            "candidate_resource": {
-                "kind": str(resource.get("kind", "")),
-                "namespace": str(resource.get("namespace", "")),
-                "name": str(resource.get("name", "")),
-            },
-            "minimal_remediation": str(found.get("minimal_remediation", "")),
-            "verification_plan": found.get("verification_plan", [])
-            if isinstance(found.get("verification_plan"), list)
-            else [],
-        }
+        document = found
     document["handoff_digest"] = _digest_document(document, "handoff_digest")
     return document
 
@@ -748,7 +839,7 @@ def _r1c_config_mounts(profile: Mapping[str, Any]) -> list[str]:
         ):
             raise RuntimeError("R1c configuration file digest mismatch")
         mounts.append(f"{source.resolve()}:{item['container_path']}:ro")
-    if len(mounts) != 2:
+    if len(mounts) != 4:
         raise RuntimeError("R1c configuration bundle is incomplete")
     return mounts
 
@@ -882,9 +973,10 @@ def _materialized_config_mounts(profile: Mapping[str, Any], bundle_root: str | P
     bundle path is supplied by the host worker and every file is bound to the
     digest declared by its config manifest before it can enter the container.
     """
-    root = Path(bundle_root).resolve()
-    if not root.is_dir() or root.is_symlink():
+    unresolved_root = Path(bundle_root)
+    if unresolved_root.is_symlink() or not unresolved_root.is_dir():
         raise RuntimeError("materialization bundle root is unavailable")
+    root = unresolved_root.resolve()
     bundle_path = root / "config-bundle.json"
     if not bundle_path.is_file() or bundle_path.is_symlink():
         raise RuntimeError("materialization config bundle is unavailable")
