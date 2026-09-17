@@ -1018,6 +1018,8 @@ class SafeStratusRunner:
                 "-v",
                 f"{Path(logs).resolve()}:/logs:rw",
                 "-e",
+                "HOME=/home/agent",
+                "-e",
                 "KUBECONFIG=/home/agent/.kube/config",
                 "-e",
                 "AGENT_LOGS_DIR=/logs",

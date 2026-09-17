@@ -95,6 +95,7 @@ def test_runner_replaces_shell_entrypoint_with_frozen_python_command(
     assert docker[-2:] == ["-m", "clients.stratus.stratus_agent.driver.driver"]
     assert "--user" in docker
     assert any(item.endswith(":/home/agent/.kube/config:ro") for item in docker)
+    assert "HOME=/home/agent" in docker
     assert "KUBECONFIG=/home/agent/.kube/config" in docker
     assert "SREGYM_ARTIFACT_ID=network_policy_block" in docker
     assert "--env-file" in docker
