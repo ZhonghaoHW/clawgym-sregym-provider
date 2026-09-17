@@ -42,13 +42,20 @@ def _endpoint(pod_name):
 
 
 class _CoreV1:
-    def __init__(self, *, endpoint_pods=None, probe_phase="Succeeded", probe_logs="RECOMMENDATION_OK\n"):
+    def __init__(
+        self,
+        *,
+        endpoint_pods=None,
+        probe_phase="Succeeded",
+        probe_logs="RECOMMENDATION_OK\n",
+        probe_results=None,
+    ):
         endpoint_pods = ["recommendation-abc"] if endpoint_pods is None else endpoint_pods
         self.endpoints = SimpleNamespace(
             subsets=[SimpleNamespace(addresses=[_endpoint(name) for name in endpoint_pods])]
         )
-        self.probe_phase = probe_phase
-        self.probe_logs = probe_logs
+        self.probe_results = list(probe_results or [(probe_phase, probe_logs)])
+        self.probe_phase, self.probe_logs = self.probe_results[0]
         self.created_pods = []
         self.deleted_pods = []
 
@@ -67,6 +74,8 @@ class _CoreV1:
 
     def create_namespaced_pod(self, namespace, body):
         self.created_pods.append((namespace, body))
+        if self.probe_results:
+            self.probe_phase, self.probe_logs = self.probe_results.pop(0)
 
     def read_namespaced_pod(self, name, namespace):
         return SimpleNamespace(status=SimpleNamespace(phase=self.probe_phase))
@@ -125,7 +134,36 @@ def test_rejects_ongoing_outage_even_if_injected_policy_was_removed():
     oracle = _oracle(_KubeCtl(core_v1=core_v1))
 
     assert oracle.evaluate()["success"] is False
-    assert len(core_v1.deleted_pods) == 1
+    assert len(core_v1.deleted_pods) == oracle.probe_attempts
+
+
+def test_retries_a_transient_probe_failure_within_the_bounded_probe_budget():
+    core_v1 = _CoreV1(
+        probe_results=[
+            ("Failed", "wget: download timed out\n"),
+            ("Succeeded", "RECOMMENDATION_OK\n"),
+        ]
+    )
+    oracle = _oracle(_KubeCtl(core_v1=core_v1))
+
+    assert oracle.evaluate()["success"] is True
+    assert len(core_v1.created_pods) == 2
+    assert len(core_v1.deleted_pods) == 2
+
+
+def test_retries_are_bounded_when_every_probe_attempt_fails():
+    core_v1 = _CoreV1(
+        probe_results=[
+            ("Failed", "wget: download timed out\n"),
+            ("Failed", "wget: download timed out\n"),
+            ("Failed", "wget: download timed out\n"),
+        ]
+    )
+    oracle = _oracle(_KubeCtl(core_v1=core_v1))
+
+    assert oracle.evaluate()["success"] is False
+    assert len(core_v1.created_pods) == oracle.probe_attempts
+    assert len(core_v1.deleted_pods) == oracle.probe_attempts
 
 
 def test_rejects_scaled_to_zero_without_waiting_or_probing():

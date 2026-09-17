@@ -186,6 +186,14 @@
         "tests/clawgym_overlay/test_cluster_state_reconciliation.py"
       ],
       "sha256": "2d6bef7a0ed3f301db0dd58dc8f895e80aa358a13e9099984eacaf4c8f4380bb"
+    },
+    {
+      "path": "sregym/conductor/oracles/network_policy_oracle.py",
+      "rationale": "clawgym_overlay/docs/core-patches/0006-bounded-network-policy-probe-retry.md",
+      "tests": [
+        "tests/oracles/test_network_policy_mitigation.py"
+      ],
+      "sha256": "331ca973abf2f314b1a7dd9197b4d551462f4a865169856db3be82f1a5b13258"
     }
   ]
 }

@@ -13,6 +13,7 @@ class NetworkPolicyMitigationOracle(Oracle):
     importance = 1.0
     rollout_timeout_seconds = 120
     probe_timeout_seconds = 60
+    probe_attempts = 3
     poll_interval_seconds = 2
 
     @staticmethod
@@ -108,7 +109,6 @@ class NetworkPolicyMitigationOracle(Oracle):
         if not source_labels:
             print(f"[FAIL] Service '{frontend_service}' has no selector for the probe's network identity")
             return False
-        pod_name = f"recommendation-connectivity-check-{time.time_ns()}"[:63]
         target_dns = f"{target_service}.{namespace}.svc.cluster.local"
         url = (
             f"http://{frontend_service}.{namespace}.svc.cluster.local:{frontend_port}/recommendations"
@@ -120,55 +120,67 @@ class NetworkPolicyMitigationOracle(Oracle):
             'printf \'%s\' "$response" | grep -q \'"type":"FeatureCollection"\' && '
             "echo RECOMMENDATION_OK"
         )
-        pod = client.V1Pod(
-            metadata=client.V1ObjectMeta(
-                name=pod_name,
-                namespace=namespace,
-                labels=source_labels,
-            ),
-            spec=client.V1PodSpec(
-                restart_policy="Never",
-                automount_service_account_token=False,
-                containers=[
-                    client.V1Container(
-                        name="probe",
-                        image="busybox:1.36",
-                        image_pull_policy="IfNotPresent",
-                        command=["sh", "-c", script],
-                        readiness_probe=client.V1Probe(
-                            _exec=client.V1ExecAction(command=["sh", "-c", "exit 1"]),
-                            period_seconds=1,
-                            failure_threshold=1,
-                        ),
-                    )
-                ],
-            ),
-        )
+        deadline = time.monotonic() + self.probe_timeout_seconds
+        for attempt in range(1, self.probe_attempts + 1):
+            if time.monotonic() >= deadline:
+                break
 
-        try:
-            core_v1.create_namespaced_pod(namespace=namespace, body=pod)
-            deadline = time.monotonic() + self.probe_timeout_seconds
-            phase = "Pending"
-            while time.monotonic() < deadline:
-                current = core_v1.read_namespaced_pod(name=pod_name, namespace=namespace)
-                phase = current.status.phase or "Pending"
-                if phase in ("Succeeded", "Failed"):
-                    break
-                time.sleep(self.poll_interval_seconds)
-
-            logs = core_v1.read_namespaced_pod_log(name=pod_name, namespace=namespace)
-            print(logs.strip())
-            return phase == "Succeeded" and "RECOMMENDATION_OK" in logs
-        except ApiException as exc:
-            print(f"[FAIL] Recommendation probe failed: {exc}")
-            return False
-        finally:
-            with contextlib.suppress(ApiException):
-                core_v1.delete_namespaced_pod(
+            pod_name = f"recommendation-connectivity-check-{attempt}-{time.time_ns()}"[:63]
+            pod = client.V1Pod(
+                metadata=client.V1ObjectMeta(
                     name=pod_name,
                     namespace=namespace,
-                    grace_period_seconds=0,
-                )
+                    labels=source_labels,
+                ),
+                spec=client.V1PodSpec(
+                    restart_policy="Never",
+                    automount_service_account_token=False,
+                    containers=[
+                        client.V1Container(
+                            name="probe",
+                            image="busybox:1.36",
+                            image_pull_policy="IfNotPresent",
+                            command=["sh", "-c", script],
+                            readiness_probe=client.V1Probe(
+                                _exec=client.V1ExecAction(command=["sh", "-c", "exit 1"]),
+                                period_seconds=1,
+                                failure_threshold=1,
+                            ),
+                        )
+                    ],
+                ),
+            )
+
+            try:
+                core_v1.create_namespaced_pod(namespace=namespace, body=pod)
+                phase = "Pending"
+                while time.monotonic() < deadline:
+                    current = core_v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+                    phase = current.status.phase or "Pending"
+                    if phase in ("Succeeded", "Failed"):
+                        break
+                    time.sleep(min(self.poll_interval_seconds, max(0, deadline - time.monotonic())))
+
+                logs = core_v1.read_namespaced_pod_log(name=pod_name, namespace=namespace)
+                print(logs.strip())
+                if phase == "Succeeded" and "RECOMMENDATION_OK" in logs:
+                    return True
+                print(f"[RETRY] Recommendation probe attempt {attempt} did not pass")
+            except ApiException as exc:
+                print(f"[RETRY] Recommendation probe attempt {attempt} failed: {exc}")
+            finally:
+                with contextlib.suppress(ApiException):
+                    core_v1.delete_namespaced_pod(
+                        name=pod_name,
+                        namespace=namespace,
+                        grace_period_seconds=0,
+                    )
+
+            remaining = deadline - time.monotonic()
+            if attempt < self.probe_attempts and remaining > 0:
+                time.sleep(min(self.poll_interval_seconds, remaining))
+
+        return False
 
     def evaluate(self) -> dict:
         print("== NetworkPolicy Mitigation Evaluation ==")
