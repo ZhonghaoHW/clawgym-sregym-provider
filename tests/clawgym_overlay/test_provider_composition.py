@@ -752,6 +752,12 @@ def test_reference_adapter_requires_agent_validation_and_filtered_access() -> No
     assert result.outcome.status == "succeeded"
     assert result.outcome.evidence[0].document["summary"]["transcript_bytes"] == 123
     assert result.outcome.evidence[1].document["image_sha256_digest"] == "b" * 64
+    process = result.outcome.evidence[1].document
+    assert process["schema_id"] == "clawgym.sregym_reference_agent_process.v2"
+    assert process["transcript_redacted"] is True
+    assert process["transcript_sha256_digest"] == "a" * 64
+    assert process["transcript_bytes"] == 123
+    assert "transcript" not in process
     with pytest.raises(RuntimeError, match="agent_validation"):
         adapter.invoke(SimpleNamespace(lane="evaluation", manifest_digest="a" * 64), access)
     with pytest.raises(RuntimeError, match="filtered"):

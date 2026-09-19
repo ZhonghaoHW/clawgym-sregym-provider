@@ -135,24 +135,21 @@ class SREGymReferenceAgentAdapter:
             EvidencePayload(
                 artifact_key=f"runs/{run_manifest.manifest_digest}/reference-agent-process.json",
                 document={
-                    "schema_id": "clawgym.sregym_reference_agent_process.v1",
+                    # The process artifact is a redacted representation. Raw
+                    # child output may contain prompts, model responses,
+                    # headers or hidden task material and must not cross the
+                    # evidence boundary.
+                    "schema_id": "clawgym.sregym_reference_agent_process.v2",
                     "image_sha256_digest": execution.image_digest,
-                    "transcript": execution.transcript,
                     "transcript_sha256_digest": transcript_digest,
                     "transcript_bytes": execution.transcript_bytes,
+                    "transcript_redacted": True,
+                    "trajectory_record_count": len(execution.trajectory_records),
+                    "trajectory_records_sha256_digest": sha256_digest(list(execution.trajectory_records)),
+                    "trajectory_records_redacted": True,
                 },
             ),
         ]
-        if execution.trajectory_records:
-            evidence.append(
-                EvidencePayload(
-                    artifact_key=f"runs/{run_manifest.manifest_digest}/reference-agent-trajectories.json",
-                    document={
-                        "schema_id": "clawgym.sregym_reference_agent_trajectories.v1",
-                        "records": list(execution.trajectory_records),
-                    },
-                )
-            )
         if execution.diagnosis_handoff is not None:
             evidence.append(
                 EvidencePayload(
